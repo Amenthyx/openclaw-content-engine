@@ -327,20 +327,32 @@ function Configure-OpenClaw {
     }
 
     $settings = @(
+        # Plugins
         @("plugins.entries.lobster.enabled", "true", "lobster (browser)"),
-        @("browser.defaultProfile", "openclaw", "browser default profile (headless)"),
         @("plugins.entries.llm-task.enabled", "true", "llm-task (background)"),
-        @("tools.allow", '["*"]', "allow all tools"),
+        @("plugins.entries.open-prose.enabled", "true", "open-prose (text)"),
+        @("plugins.entries.voice-call.enabled", "true", "voice-call (audio)"),
+        # Browser
+        @("browser.defaultProfile", "openclaw", "browser default profile (headless)"),
+        # Tools — full access for all channels
+        @("tools.allow", '["*"]', "allow ALL tools"),
         @("tools.elevated.enabled", "true", "elevated tools"),
+        @("tools.elevated.allowFrom.telegram", '["*"]', "elevated from telegram"),
+        @("tools.elevated.allowFrom.discord", '["*"]', "elevated from discord"),
         @("tools.exec.timeoutSec", "1800", "exec timeout 30min"),
         @("tools.exec.notifyOnExit", "true", "exec notify"),
+        # Agent defaults
         @("agents.defaults.sandbox.mode", "off", "sandbox off"),
         @("agents.defaults.maxConcurrent", "4", "max agents"),
         @("agents.defaults.subagents.maxConcurrent", "8", "max subagents"),
         @("agents.defaults.compaction.mode", "safeguard", "compaction"),
+        # Commands
         @("commands.native", "auto", "native commands"),
         @("commands.nativeSkills", "auto", "native skills"),
-        @("skills.install.nodeManager", "npm", "node manager")
+        # Skills
+        @("skills.install.nodeManager", "npm", "node manager"),
+        # Messages
+        @("messages.ackReactionScope", "group-mentions", "ack reactions")
     )
 
     foreach ($s in $settings) {
@@ -353,6 +365,10 @@ function Configure-OpenClaw {
         Log "  workspace..."
         Oc-Config -Args @("set", "agents.defaults.workspace", $ws)
     }
+
+    # Install lobster plugin (provides the browser tool)
+    Log "  Installing lobster plugin..."
+    Oc-Cmd -Args @("plugins", "install", "lobster")
 
     # Create headless browser profile (works without Chrome installed)
     Log "  Creating headless browser profile..."
@@ -376,16 +392,23 @@ try { cfg = JSON.parse(fs.readFileSync(p, 'utf8')); } catch(e) {}
 if (!cfg.plugins) cfg.plugins = {};
 if (!cfg.plugins.entries) cfg.plugins.entries = {};
 cfg.plugins.entries.lobster = { enabled: true };
+cfg.plugins.entries['llm-task'] = { enabled: true };
+cfg.plugins.entries['open-prose'] = { enabled: true };
+cfg.plugins.entries['voice-call'] = { enabled: true };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
-cfg.plugins.entries['llm-task'] = { enabled: true };
 if (!cfg.tools) cfg.tools = {};
 cfg.tools.allow = ['*'];
 if (!cfg.tools.elevated) cfg.tools.elevated = {};
 cfg.tools.elevated.enabled = true;
+if (!cfg.tools.elevated.allowFrom) cfg.tools.elevated.allowFrom = {};
+cfg.tools.elevated.allowFrom.telegram = ['*'];
+cfg.tools.elevated.allowFrom.discord = ['*'];
 if (!cfg.tools.exec) cfg.tools.exec = {};
 cfg.tools.exec.timeoutSec = 1800;
 cfg.tools.exec.notifyOnExit = true;
+if (!cfg.messages) cfg.messages = {};
+cfg.messages.ackReactionScope = 'group-mentions';
 if (!cfg.agents) cfg.agents = {};
 if (!cfg.agents.defaults) cfg.agents.defaults = {};
 cfg.agents.defaults.sandbox = { mode: 'off' };
@@ -421,12 +444,19 @@ if os.path.exists(path):
 cfg.setdefault("plugins", {}).setdefault("entries", {})
 cfg["plugins"]["entries"]["lobster"] = {"enabled": True}
 cfg["plugins"]["entries"]["llm-task"] = {"enabled": True}
+cfg["plugins"]["entries"]["open-prose"] = {"enabled": True}
+cfg["plugins"]["entries"]["voice-call"] = {"enabled": True}
 cfg.setdefault("tools", {})
 cfg["tools"]["allow"] = ["*"]
 cfg["tools"].setdefault("elevated", {})["enabled"] = True
+cfg["tools"].setdefault("elevated", {}).setdefault("allowFrom", {})
+cfg["tools"]["elevated"]["allowFrom"]["telegram"] = ["*"]
+cfg["tools"]["elevated"]["allowFrom"]["discord"] = ["*"]
 cfg["tools"].setdefault("exec", {})
 cfg["tools"]["exec"]["timeoutSec"] = 1800
 cfg["tools"]["exec"]["notifyOnExit"] = True
+cfg.setdefault("messages", {})
+cfg["messages"]["ackReactionScope"] = "group-mentions"
 cfg.setdefault("agents", {}).setdefault("defaults", {})
 cfg["agents"]["defaults"]["sandbox"] = {"mode": "off"}
 cfg["agents"]["defaults"]["maxConcurrent"] = 4

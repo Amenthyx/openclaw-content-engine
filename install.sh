@@ -455,53 +455,74 @@ configure_openclaw() {
 }
 
 configure_via_cli() {
-    log "  [Plugins] lobster (browser automation)..."
+    # --- PLUGINS ---
+    # Enable lobster (browser), llm-task (background), open-prose (text), voice-call (audio)
+    log "  [Plugins] Enabling all required plugins..."
     oc_config set plugins.entries.lobster.enabled true
-    log "  [Plugins] llm-task (background tasks)..."
     oc_config set plugins.entries.llm-task.enabled true
+    oc_config set plugins.entries.open-prose.enabled true
+    oc_config set plugins.entries.voice-call.enabled true
 
-    log "  [Tools] allow all..."
+    # Install lobster plugin if not already installed (provides browser tool)
+    log "  [Plugins] Ensuring lobster plugin is installed..."
+    oc_cmd plugins install lobster 2>/dev/null || true
+
+    # --- TOOLS: FULL ACCESS ---
+    log "  [Tools] Allowing ALL tools for ALL channels..."
     oc_config set tools.allow '["*"]'
-    log "  [Tools] elevated tools..."
+
+    # Elevated tools — allow from ALL channels (telegram, discord, etc.)
     oc_config set tools.elevated.enabled true
-    log "  [Tools] exec timeout 30min..."
+    oc_config set tools.elevated.allowFrom.telegram '["*"]'
+    oc_config set tools.elevated.allowFrom.discord '["*"]'
+
+    # Exec tool — 30min timeout for long-running tasks (FFmpeg, downloads)
     oc_config set tools.exec.timeoutSec 1800
-    log "  [Tools] exec notify on exit..."
     oc_config set tools.exec.notifyOnExit true
 
-    log "  [Agent] sandbox off..."
+    # --- AGENT DEFAULTS ---
+    log "  [Agent] Setting defaults (sandbox off, concurrency, compaction)..."
     oc_config set agents.defaults.sandbox.mode off
-    log "  [Agent] max concurrent 4..."
     oc_config set agents.defaults.maxConcurrent 4
-    log "  [Agent] subagents max 8..."
     oc_config set agents.defaults.subagents.maxConcurrent 8
-    log "  [Agent] compaction safeguard..."
     oc_config set agents.defaults.compaction.mode safeguard
 
     if [ "$INSTALL_MODE" = "local" ]; then
-        log "  [Agent] workspace..."
-        # Normalize path (forward slashes for JSON)
         local ws
         ws=$(echo "${OPENCLAW_HOME}/workspace" | sed 's|\\|/|g')
         oc_config set agents.defaults.workspace "$ws"
     fi
 
+    # --- COMMANDS ---
     log "  [Commands] native + nativeSkills = auto..."
     oc_config set commands.native auto
     oc_config set commands.nativeSkills auto
 
-    log "  [Skills] nodeManager = npm..."
+    # --- SKILLS ---
     oc_config set skills.install.nodeManager npm
 
+    # --- MESSAGES: ack reactions for group mentions ---
+    oc_config set messages.ackReactionScope group-mentions
+
     # --- BROWSER PROFILE ---
-    # Set "openclaw" (headless Playwright) as default browser profile
-    # This works on fresh machines even without Chrome/Chromium installed
+    # "openclaw" = headless Playwright; works without Chrome/Chromium installed
     log "  [Browser] Setting default profile to 'openclaw' (headless Playwright)..."
     oc_config set browser.defaultProfile openclaw
 
-    # Ensure the headless profile exists
-    log "  [Browser] Creating headless browser profile..."
+    # Create the headless profile if it doesn't exist
     oc_cmd browser create-profile --name openclaw --driver openclaw --color "#FF4500" 2>/dev/null || true
+
+    # --- VERIFY BROWSER TOOL ---
+    log "  [Browser] Verifying browser tool availability..."
+    local tools_out
+    tools_out=$(oc_cmd tools list 2>/dev/null || true)
+    if echo "$tools_out" | grep -qi "browser"; then
+        log "  Browser tool: AVAILABLE"
+    else
+        warn "  Browser tool not visible yet — will be available after gateway restart"
+        # Try activating lobster one more time
+        oc_cmd plugins activate lobster 2>/dev/null || true
+    fi
 
     log "  All settings applied"
 }
@@ -523,13 +544,20 @@ if (!cfg.plugins) cfg.plugins = {};
 if (!cfg.plugins.entries) cfg.plugins.entries = {};
 cfg.plugins.entries.lobster = { enabled: true };
 cfg.plugins.entries['llm-task'] = { enabled: true };
+cfg.plugins.entries['open-prose'] = { enabled: true };
+cfg.plugins.entries['voice-call'] = { enabled: true };
 if (!cfg.tools) cfg.tools = {};
 cfg.tools.allow = ['*'];
 if (!cfg.tools.elevated) cfg.tools.elevated = {};
 cfg.tools.elevated.enabled = true;
+if (!cfg.tools.elevated.allowFrom) cfg.tools.elevated.allowFrom = {};
+cfg.tools.elevated.allowFrom.telegram = ['*'];
+cfg.tools.elevated.allowFrom.discord = ['*'];
 if (!cfg.tools.exec) cfg.tools.exec = {};
 cfg.tools.exec.timeoutSec = 1800;
 cfg.tools.exec.notifyOnExit = true;
+if (!cfg.messages) cfg.messages = {};
+cfg.messages.ackReactionScope = 'group-mentions';
 if (!cfg.agents) cfg.agents = {};
 if (!cfg.agents.defaults) cfg.agents.defaults = {};
 cfg.agents.defaults.sandbox = { mode: 'off' };
@@ -562,9 +590,14 @@ if os.path.exists(path):
 cfg.setdefault("plugins", {}).setdefault("entries", {})
 cfg["plugins"]["entries"]["lobster"] = {"enabled": True}
 cfg["plugins"]["entries"]["llm-task"] = {"enabled": True}
+cfg["plugins"]["entries"]["open-prose"] = {"enabled": True}
+cfg["plugins"]["entries"]["voice-call"] = {"enabled": True}
 cfg.setdefault("tools", {})
 cfg["tools"]["allow"] = ["*"]
 cfg["tools"].setdefault("elevated", {})["enabled"] = True
+cfg["tools"].setdefault("elevated", {}).setdefault("allowFrom", {})
+cfg["tools"]["elevated"]["allowFrom"]["telegram"] = ["*"]
+cfg["tools"]["elevated"]["allowFrom"]["discord"] = ["*"]
 cfg["tools"].setdefault("exec", {})
 cfg["tools"]["exec"]["timeoutSec"] = 1800
 cfg["tools"]["exec"]["notifyOnExit"] = True
@@ -579,6 +612,8 @@ cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
 cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
+cfg.setdefault("messages", {})
+cfg["messages"]["ackReactionScope"] = "group-mentions"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
 with open(path, "w") as f:
