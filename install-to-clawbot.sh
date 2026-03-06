@@ -190,7 +190,7 @@ reindex_memory() {
     log "=== Triggering Memory Reindex ==="
 
     docker exec -u node "$CONTAINER_NAME" bash -c \
-        "openclaw memory sync --force 2>&1" || {
+        "openclaw memory index --force 2>&1" || {
         warn "Auto-reindex not available. Memory will be indexed on next query."
     }
 

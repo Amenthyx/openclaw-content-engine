@@ -276,7 +276,7 @@ deploy_credentials_local() {
 reindex_local() {
     log "=== Triggering Memory Reindex ==="
     if command -v openclaw &>/dev/null; then
-        openclaw memory sync --force 2>&1 || warn "Auto-reindex not available. Will index on next query."
+        openclaw memory index --force 2>&1 || warn "Auto-reindex not available. Will index on next query."
     else
         warn "openclaw CLI not in PATH. Memory will be indexed on next startup."
     fi
@@ -388,7 +388,7 @@ deploy_credentials_docker() {
 reindex_docker() {
     log "=== Triggering Memory Reindex ==="
     docker exec -u node "$CONTAINER_NAME" bash -c \
-        "openclaw memory sync --force 2>&1" 2>/dev/null || {
+        "openclaw memory index --force 2>&1" 2>/dev/null || {
         warn "Auto-reindex not available. Memory will be indexed on next query."
     }
 }

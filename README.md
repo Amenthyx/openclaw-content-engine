@@ -252,7 +252,7 @@ Open `http://localhost:6080` in your browser, solve the CAPTCHA manually, then C
 
 **Memory search returns no results**
 ```bash
-docker exec -u node clawbot openclaw memory sync --force
+openclaw memory index --force
 ```
 
 **Browser crashes or freezes**
