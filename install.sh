@@ -528,95 +528,130 @@ reindex_memory() {
 }
 
 # ============================================================================
-# [6/7] Restart gateway to load new config
+# [6/7] Full restart of OpenClaw gateway to load new config
 # ============================================================================
 restart_gateway() {
-    log "=== [6/7] Restarting Gateway (loading new config) ==="
+    log "=== [6/7] Full OpenClaw Restart ==="
 
+    # --- DOCKER ---
     if [ "$INSTALL_MODE" = "docker" ]; then
-        log "  Restarting Docker container ${CONTAINER_NAME}..."
-        docker restart "$CONTAINER_NAME" 2>/dev/null && log "  Container restarted" || warn "  Could not restart container — do it manually: docker restart ${CONTAINER_NAME}"
-        log "  Waiting for gateway to come back..."
-        sleep 8
+        log "  Stopping container ${CONTAINER_NAME}..."
+        docker stop "$CONTAINER_NAME" 2>/dev/null || true
+        sleep 2
+        log "  Starting container ${CONTAINER_NAME}..."
+        docker start "$CONTAINER_NAME" 2>/dev/null || { err "  Failed to start container"; return; }
+        log "  Waiting for gateway inside container..."
+        sleep 10
+        log "  Container restarted"
         return
     fi
 
+    # --- LOCAL ---
     if [ -z "$OC_BIN" ]; then
-        warn "  openclaw CLI not found — restart gateway manually after install"
+        warn "  openclaw CLI not found — restart manually after install"
         return
     fi
 
-    # Step 1: Find and kill the running gateway process
-    log "  Stopping gateway..."
-    "$OC_BIN" gateway stop 2>/dev/null || true
-    sleep 2
+    # ---- STEP 1: Kill everything OpenClaw ----
+    log "  Killing all OpenClaw processes..."
 
-    # Kill any remaining openclaw gateway process by port
-    local gw_pid=""
+    # Try graceful stop first
+    "$OC_BIN" gateway stop 2>/dev/null || true
+    sleep 1
+
+    # Get gateway port from config (default 18789)
+    local gw_port=18789
+    local cfg_port
+    cfg_port=$("$OC_BIN" config get gateway.port 2>/dev/null || true)
+    if [ -n "$cfg_port" ] && echo "$cfg_port" | grep -qE '^[0-9]+$'; then
+        gw_port="$cfg_port"
+    fi
+
     case "$OS_TYPE" in
         windows)
-            # Windows: use netstat to find PID on port 18789
-            gw_pid=$(netstat -ano 2>/dev/null | grep ":18789 " | grep "LISTENING" | awk '{print $5}' | head -1)
-            if [ -n "$gw_pid" ] && [ "$gw_pid" != "0" ]; then
-                log "  Killing gateway process (PID $gw_pid)..."
-                taskkill //PID "$gw_pid" //F 2>/dev/null || true
-                sleep 2
-            fi
+            # Kill by port — most reliable on Windows
+            local pids
+            pids=$(netstat.exe -ano 2>/dev/null | grep ":${gw_port} " | grep "LISTEN" | awk '{print $5}' | sort -u)
+            for pid in $pids; do
+                if [ -n "$pid" ] && [ "$pid" != "0" ]; then
+                    log "  Killing PID $pid (port $gw_port)..."
+                    taskkill.exe //PID "$pid" //F 2>/dev/null || true
+                fi
+            done
+            # Also kill any node process running openclaw gateway
+            taskkill.exe //IM "node.exe" //FI "WINDOWTITLE eq openclaw*" //F 2>/dev/null || true
+            # Kill by command line match (catches all openclaw node processes)
+            wmic.exe process where "CommandLine like '%openclaw%gateway%'" call terminate 2>/dev/null || true
             ;;
-        linux|wsl|macos)
-            # Unix: use lsof or fuser
+        linux|wsl)
+            # Kill by port
+            if command -v fuser >/dev/null 2>&1; then
+                fuser -k "${gw_port}/tcp" 2>/dev/null || true
+            elif command -v lsof >/dev/null 2>&1; then
+                lsof -ti :"$gw_port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+            fi
+            # Kill any openclaw gateway process
+            pkill -f "openclaw.*gateway" 2>/dev/null || true
+            ;;
+        macos)
+            # Kill by port
             if command -v lsof >/dev/null 2>&1; then
-                gw_pid=$(lsof -ti :18789 2>/dev/null | head -1)
-            elif command -v fuser >/dev/null 2>&1; then
-                gw_pid=$(fuser 18789/tcp 2>/dev/null | tr -d ' ')
+                lsof -ti :"$gw_port" 2>/dev/null | xargs kill -9 2>/dev/null || true
             fi
-            if [ -n "$gw_pid" ]; then
-                log "  Killing gateway process (PID $gw_pid)..."
-                kill "$gw_pid" 2>/dev/null || true
-                sleep 2
-                # Force kill if still running
-                kill -0 "$gw_pid" 2>/dev/null && kill -9 "$gw_pid" 2>/dev/null || true
-                sleep 1
-            fi
+            # Kill any openclaw gateway process
+            pkill -f "openclaw.*gateway" 2>/dev/null || true
             ;;
     esac
 
-    # Step 2: Start gateway fresh in background
-    log "  Starting gateway with new config..."
+    # Wait for port to be free
+    sleep 3
+    log "  All OpenClaw processes killed"
+
+    # ---- STEP 2: Start gateway fresh ----
+    log "  Starting OpenClaw gateway..."
+
+    # Use --force to claim the port even if something lingers
     case "$OS_TYPE" in
         windows)
-            # On Windows/Git Bash, use start to detach
-            "$OC_BIN" gateway 2>/dev/null &
-            local bg_pid=$!
-            disown "$bg_pid" 2>/dev/null || true
+            "$OC_BIN" gateway --force >/dev/null 2>&1 &
+            disown "$!" 2>/dev/null || true
             ;;
         *)
-            nohup "$OC_BIN" gateway >/dev/null 2>&1 &
+            nohup "$OC_BIN" gateway --force >/dev/null 2>&1 &
             disown 2>/dev/null || true
             ;;
     esac
 
-    # Step 3: Wait and verify
-    log "  Waiting for gateway to start..."
+    # ---- STEP 3: Wait for gateway to be ready ----
+    log "  Waiting for gateway to come online..."
     local attempts=0
-    local max_attempts=12
     local gw_up=false
-    while [ "$attempts" -lt "$max_attempts" ]; do
+    while [ "$attempts" -lt 15 ]; do
         sleep 2
         attempts=$((attempts + 1))
-        local status_out
-        status_out=$("$OC_BIN" gateway status 2>&1 || true)
-        if echo "$status_out" | grep -qi "RPC probe: ok\|Listening"; then
+        local probe
+        probe=$("$OC_BIN" gateway status 2>&1 || true)
+        if echo "$probe" | grep -q "RPC probe: ok"; then
             gw_up=true
             break
         fi
     done
 
     if $gw_up; then
-        log "  Gateway is running with new config"
+        log "  OpenClaw gateway is running (new config loaded)"
+
+        # Verify browser service loaded
+        local browser_status
+        browser_status=$("$OC_BIN" browser status 2>&1 || true)
+        if echo "$browser_status" | grep -qi "enabled: true"; then
+            log "  Browser tool: ACTIVE"
+        else
+            warn "  Browser tool status unclear — test with: openclaw browser status"
+        fi
     else
-        warn "  Gateway may not have started — check with: openclaw gateway status"
-        warn "  You can start it manually: openclaw gateway"
+        err "  Gateway did not start within 30 seconds"
+        err "  Start manually:"
+        err "    $OC_BIN gateway --force"
     fi
 }
 

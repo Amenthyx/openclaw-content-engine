@@ -411,56 +411,71 @@ function Reindex-Memory {
 }
 
 # ============================================================================
-# [6/7] Restart gateway to load new config
+# [6/7] Full restart of OpenClaw gateway to load new config
 # ============================================================================
 function Restart-Gateway {
-    Log "=== [6/7] Restarting Gateway (loading new config) ==="
+    Log "=== [6/7] Full OpenClaw Restart ==="
 
     if ($InstallMode -eq "docker") {
-        Log "  Restarting Docker container $ContainerName..."
-        try { docker restart $ContainerName 2>$null; Log "  Container restarted" }
-        catch { Warn "  Could not restart — run: docker restart $ContainerName" }
-        Log "  Waiting for gateway..."
-        Start-Sleep -Seconds 8
+        Log "  Stopping container $ContainerName..."
+        try { docker stop $ContainerName 2>$null } catch {}
+        Start-Sleep -Seconds 2
+        Log "  Starting container $ContainerName..."
+        try { docker start $ContainerName 2>$null } catch { Err "  Failed to start container" ; return }
+        Start-Sleep -Seconds 10
+        Log "  Container restarted"
         return
     }
 
     if (-not $OcBin) {
-        Warn "  openclaw CLI not found — restart gateway manually after install"
+        Warn "  openclaw CLI not found — restart manually after install"
         return
     }
 
-    # Step 1: Stop gateway
-    Log "  Stopping gateway..."
+    # Step 1: Kill all OpenClaw processes
+    Log "  Killing all OpenClaw processes..."
     try { & $OcBin gateway stop 2>$null } catch {}
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 
-    # Step 2: Kill any process on gateway port 18789
-    $portInfo = netstat -ano 2>$null | Select-String ":18789\s.*LISTENING"
-    if ($portInfo) {
-        $pidMatch = $portInfo -match '\s(\d+)\s*$'
-        if ($pidMatch) {
-            $gwPid = ($Matches[1])
-            if ($gwPid -and $gwPid -ne "0") {
-                Log "  Killing gateway process (PID $gwPid)..."
-                try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
-                Start-Sleep -Seconds 2
+    # Kill by port 18789
+    $gwPort = 18789
+    try {
+        $cfgPort = & $OcBin config get gateway.port 2>$null
+        if ($cfgPort -match '^\d+$') { $gwPort = [int]$cfgPort }
+    } catch {}
+
+    $portProcs = netstat -ano 2>$null | Select-String ":$gwPort\s.*LISTEN"
+    foreach ($line in $portProcs) {
+        if ($line -match '\s(\d+)\s*$') {
+            $pid = $Matches[1]
+            if ($pid -and $pid -ne "0") {
+                Log "  Killing PID $pid (port $gwPort)..."
+                try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
             }
         }
     }
 
-    # Step 3: Start gateway fresh
-    Log "  Starting gateway with new config..."
-    $proc = Start-Process -FilePath $OcBin -ArgumentList "gateway" -WindowStyle Hidden -PassThru
+    # Kill any node process running openclaw gateway
+    try {
+        Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%gateway%'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Log "  Killing PID $($_.ProcessId)..."; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
 
-    # Step 4: Wait and verify
-    Log "  Waiting for gateway to start..."
+    Start-Sleep -Seconds 3
+    Log "  All OpenClaw processes killed"
+
+    # Step 2: Start gateway fresh
+    Log "  Starting OpenClaw gateway..."
+    $proc = Start-Process -FilePath $OcBin -ArgumentList "gateway","--force" -WindowStyle Hidden -PassThru
+
+    # Step 3: Wait for gateway
+    Log "  Waiting for gateway to come online..."
     $gwUp = $false
-    for ($i = 0; $i -lt 12; $i++) {
+    for ($i = 0; $i -lt 15; $i++) {
         Start-Sleep -Seconds 2
         try {
             $statusOut = & $OcBin gateway status 2>$null | Out-String
-            if ($statusOut -match "RPC probe: ok|Listening") {
+            if ($statusOut -match "RPC probe: ok") {
                 $gwUp = $true
                 break
             }
@@ -468,10 +483,15 @@ function Restart-Gateway {
     }
 
     if ($gwUp) {
-        Log "  Gateway is running with new config"
+        Log "  OpenClaw gateway is running (new config loaded)"
+        try {
+            $browserOut = & $OcBin browser status 2>$null | Out-String
+            if ($browserOut -match "enabled: true") { Log "  Browser tool: ACTIVE" }
+            else { Warn "  Browser status unclear — test: openclaw browser status" }
+        } catch {}
     } else {
-        Warn "  Gateway may not have started — check: openclaw gateway status"
-        Warn "  Start manually: openclaw gateway"
+        Err "  Gateway did not start within 30 seconds"
+        Err "  Start manually: openclaw gateway --force"
     }
 }
 
