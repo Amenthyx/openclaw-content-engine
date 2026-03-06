@@ -16,7 +16,12 @@ All interactions happen through the browser — the same way a human would use t
 
 ## Credential Storage
 
-Credentials are stored in a local JSON file inside the Docker volume, never committed to git.
+Credentials are stored at `~/.openclaw/credentials.json`. The agent reads this file using its file reading tool before performing any login.
+
+To read credentials at runtime:
+```
+Read the file ~/.openclaw/credentials.json to get login credentials for [platform].
+```
 
 ### credentials.json
 ```json

@@ -7,78 +7,71 @@ metadata:
     "openclaw":
       {
         "emoji": "🎬",
-        "requires": { "bins": ["chromium", "ffmpeg"] },
       },
   }
 ---
 
 # Content Engine
 
-Autonomous multi-platform content creation system that operates entirely through **browser automation** — no API keys needed. Logs into platforms like a human user, generates professional content, and publishes across social media.
+Autonomous multi-platform content creation system that operates through OpenClaw's **built-in browser tool** — no API keys needed. Logs into platforms with your credentials, creates content through the UI, and publishes to social media.
 
 ## How It Works
 
-ClawBot logs into each platform using email/password credentials stored in `credentials.json`, performs all actions through the browser (Chromium on Xvfb), and uses FFmpeg locally for video/audio processing.
+1. You send ClawBot a content request (via Telegram, Discord, etc.)
+2. ClawBot searches its memory for relevant knowledge (platform workflows, prompts, specs)
+3. ClawBot opens the browser, logs into the needed platform
+4. Creates content through the browser UI (images, videos, music, voiceovers)
+5. Downloads assets locally, processes with FFmpeg if needed
+6. Logs into social platforms and publishes
+
+All browser interactions use OpenClaw's built-in `browser` tool:
+```
+browser navigate https://chat.openai.com
+browser snapshot
+browser type [ref] "Generate an image: sunset over mountains"
+browser press Enter
+```
 
 ## Capabilities
 
-- **Image Generation**: ChatGPT (DALL-E via browser), Higgsfield Soul, Midjourney (Discord), Stability AI, Canva
-- **Video Generation**: Higgsfield (Soul→DoP→Speak), Runway ML, Kling AI, Pika Labs
-- **Audio/Music**: ElevenLabs (browser TTS + voice cloning), Suno AI (browser music gen)
-- **Video Editing**: FFmpeg local assembly, transitions, subtitles, color grading
-- **Social Publishing**: Instagram, TikTok, YouTube, X/Twitter, LinkedIn — all via browser login
-- **Content Strategy**: Calendar management, script writing, platform optimization
+- **Image Generation**: ChatGPT (DALL-E via browser), Higgsfield Soul, Midjourney (Discord), Canva
+- **Video Generation**: Higgsfield (Soul→DoP→Speak), Runway ML, Kling AI, Pika
+- **Audio/Music**: ElevenLabs (browser TTS), Suno AI (browser music gen)
+- **Video Editing**: FFmpeg (exec tool) for assembly, transitions, subtitles
+- **Social Publishing**: Instagram, TikTok, YouTube, X/Twitter, LinkedIn — all via browser
 
-## Setup
+## Required OpenClaw Config
 
-### 1. Install the knowledge base
+The browser tool and exec tool must be enabled:
 ```bash
-bash install-to-clawbot.sh
+openclaw config set tools.allow '["*"]'
+openclaw config set plugins.entries.lobster.enabled true
 ```
 
-### 2. Configure credentials
-```bash
-# Copy the template into ClawBot's volume
-docker cp credentials-template.json clawbot:/home/node/.openclaw/credentials.json
+## Credentials
 
-# Edit with your login details
-docker exec -it clawbot nano /home/node/.openclaw/credentials.json
+Platform logins stored in `~/.openclaw/credentials.json`. Edit with your email/password for each platform.
+
+## Example Usage
+
+Send to ClawBot:
+```
+Create a product promo image for my coffee brand. Modern, warm colors.
 ```
 
-### 3. Start using it
-Send ClawBot a message:
-```
-Create a 30-second promo video for my coffee brand.
-Style: warm, artisan. Platforms: Instagram Reels + TikTok.
-```
+ClawBot will:
+1. Open browser → navigate to ChatGPT
+2. Log in (or restore saved session)
+3. Ask DALL-E to generate the image
+4. Download the image
+5. Return it to you
 
-## Monitoring
+## Memory Knowledge Base
 
-Watch ClawBot work in real-time via noVNC:
-```
-http://localhost:6080
-```
-
-## Platform Accounts Needed
-
-| Platform | Subscription | Used For |
-|----------|-------------|----------|
-| ChatGPT Plus/Pro | $20-200/mo | Images (DALL-E), scripts, vision |
-| ElevenLabs | $5-22/mo | Voiceovers, voice cloning |
-| Higgsfield | Free/Paid | Avatar video pipeline |
-| Suno AI | $10/mo | Background music |
-| Runway ML | $15/mo | Cinematic video |
-| Midjourney | $10/mo | Artistic images |
-| Canva Pro | $13/mo | Design templates |
-| Instagram | Free | Social publishing |
-| TikTok | Free | Social publishing |
-| YouTube | Free | Social publishing |
-| X/Twitter | Free | Social publishing |
-| LinkedIn | Free | Social publishing |
-
-## Memory Integration
-
-Knowledge base stored in OpenClaw's memory at `memory/content-engine/`:
-- 13 knowledge files covering auth, generation, strategy, pipelines, safety
-- Automatically searched when handling content creation requests
-- No API keys in any file — everything is browser-based
+13 knowledge files in `~/.openclaw/memory/content-engine/` covering:
+- Platform login flows and browser navigation
+- Image/video/audio generation workflows
+- Content strategy and platform optimization
+- Prompt engineering per platform
+- Pipeline templates and error recovery
+- Safety, compliance, and accessibility

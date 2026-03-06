@@ -1,249 +1,242 @@
-# Browser Automation — Core Operating Method
+# Browser Automation — Using OpenClaw's Built-In Browser Tool
 
 ## Overview
-Browser automation is the PRIMARY and ONLY method OpenClaw uses to interact with external platforms. There are no API keys — everything happens through the browser, exactly as a human would do it.
+OpenClaw has a built-in browser tool powered by Playwright. You control it through the `browser` tool — no external scripts needed. You can navigate, click, type, fill forms, take screenshots, download files, manage cookies, and more.
 
-## Browser Environment
+The browser runs Chrome/Chromium and is fully controllable by the agent during conversations.
 
-ClawBot's Docker container provides:
+---
+
+## Core Browser Commands
+
+### Starting & Status
 ```
-- Chromium browser (full, not headless)
-- Xvfb virtual display at :99 (1920x1080x24)
-- x11vnc for VNC access (port 5900)
-- noVNC web interface (port 6080) — user can watch/interact
-- Fluxbox window manager
-- Persistent session storage at /home/node/.openclaw/sessions/
-```
-
-The user can always see what ClawBot is doing by opening http://localhost:6080 in their browser.
-
-## Browser Automation Framework
-
-### Playwright (Recommended)
-```javascript
-const { chromium } = require('playwright');
-
-// Launch browser on the virtual display
-const browser = await chromium.launch({
-  headless: false,  // Use real browser on Xvfb
-  executablePath: '/usr/bin/chromium',
-  args: ['--no-sandbox', '--disable-dev-shm-usage']
-});
-
-// Load saved session (skip login if cookies are valid)
-const context = await browser.newContext({
-  storageState: '/home/node/.openclaw/sessions/chatgpt-session.json'
-});
-
-const page = await context.newPage();
+browser start                    — Launch the browser
+browser status                   — Check if browser is running
+browser stop                     — Close the browser
 ```
 
-### Session Save/Restore Pattern
-```javascript
-// After successful login — save session
-await context.storageState({ path: `/home/node/.openclaw/sessions/${platform}-session.json` });
-
-// Before next operation — restore session
-const context = await browser.newContext({
-  storageState: `/home/node/.openclaw/sessions/${platform}-session.json`
-});
-
-// Check if session is still valid
-await page.goto('https://platform.com/dashboard');
-const isLoggedIn = await page.locator('.user-avatar').isVisible({ timeout: 5000 }).catch(() => false);
-
-if (!isLoggedIn) {
-  // Session expired — re-login
-  await loginToPlatform(page, credentials);
-  await context.storageState({ path: sessionPath });
-}
+### Navigation
+```
+browser open https://example.com        — Open URL in new tab
+browser navigate https://example.com    — Navigate current tab to URL
+browser tabs                            — List all open tabs
+browser focus <targetId>                — Switch to a specific tab
+browser close <targetId>                — Close a tab
 ```
 
-## Human-Like Behavior Patterns
-
-### Typing
-```javascript
-// Type like a human — random delays between keystrokes
-async function humanType(page, selector, text) {
-  await page.click(selector);
-  for (const char of text) {
-    await page.keyboard.type(char, { delay: 50 + Math.random() * 100 });
-  }
-}
+### Reading the Page
+```
+browser snapshot                 — Get page content as AI-readable snapshot (with ref numbers)
+browser snapshot --format aria   — Get accessibility tree
+browser snapshot --labels        — Include visual labels on refs
+browser screenshot               — Capture screenshot of current page
+browser screenshot --full-page   — Full page screenshot
+browser screenshot --ref 12      — Screenshot specific element
 ```
 
-### Mouse Movement
-```javascript
-// Move mouse naturally before clicking
-async function humanClick(page, selector) {
-  const element = await page.locator(selector);
-  const box = await element.boundingBox();
-  // Move to a random point within the element
-  const x = box.x + box.width * (0.3 + Math.random() * 0.4);
-  const y = box.y + box.height * (0.3 + Math.random() * 0.4);
-  await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 10) });
-  await page.waitForTimeout(200 + Math.random() * 300);
-  await page.mouse.click(x, y);
-}
-```
-
-### Random Delays
-```javascript
-// Wait a human-like amount of time between actions
-async function humanDelay(page, minMs = 1000, maxMs = 3000) {
-  const delay = minMs + Math.random() * (maxMs - minMs);
-  await page.waitForTimeout(delay);
-}
-```
-
-### Scroll Naturally
-```javascript
-// Scroll down gradually, like reading
-async function humanScroll(page, distance = 500) {
-  const steps = 5 + Math.floor(Math.random() * 5);
-  const stepSize = distance / steps;
-  for (let i = 0; i < steps; i++) {
-    await page.mouse.wheel(0, stepSize + Math.random() * 20);
-    await page.waitForTimeout(100 + Math.random() * 200);
-  }
-}
-```
-
-## Platform-Specific Browser Workflows
-
-### ChatGPT Image Generation (Detailed)
-```javascript
-async function generateImageChatGPT(page, prompt) {
-  // Navigate to ChatGPT
-  await page.goto('https://chat.openai.com');
-  await humanDelay(page, 2000, 4000);
-
-  // Type prompt in message box
-  const input = page.locator('#prompt-textarea, textarea[placeholder]');
-  await humanType(page, input, `Generate an image: ${prompt}`);
-  await humanDelay(page, 500, 1000);
-
-  // Send message
-  await page.keyboard.press('Enter');
-
-  // Wait for image to appear (up to 60 seconds)
-  const image = page.locator('img[alt*="Generated"], img[src*="oaidalleapi"]');
-  await image.waitFor({ timeout: 60000 });
-  await humanDelay(page, 1000, 2000);
-
-  // Get image URL
-  const src = await image.getAttribute('src');
-
-  // Download image
-  const response = await page.request.get(src);
-  const buffer = await response.body();
-  fs.writeFileSync(`/home/node/.openclaw/workspace/generated-image-${Date.now()}.png`, buffer);
-
-  return src;
-}
-```
-
-### Instagram Post (Detailed)
-```javascript
-async function postToInstagram(page, imagePath, caption) {
-  await page.goto('https://www.instagram.com');
-  await humanDelay(page, 2000, 4000);
-
-  // Click create post button (+ icon)
-  await humanClick(page, '[aria-label="New post"]');
-  await humanDelay(page, 1000, 2000);
-
-  // Upload file
-  const fileInput = page.locator('input[type="file"]');
-  await fileInput.setInputFiles(imagePath);
-  await humanDelay(page, 2000, 4000);
-
-  // Click "Next" through crop/filter screens
-  await humanClick(page, 'button:has-text("Next")');
-  await humanDelay(page, 1000, 2000);
-  await humanClick(page, 'button:has-text("Next")');
-  await humanDelay(page, 1000, 2000);
-
-  // Enter caption
-  const captionInput = page.locator('[aria-label="Write a caption..."]');
-  await humanType(page, captionInput, caption);
-  await humanDelay(page, 1000, 2000);
-
-  // Share
-  await humanClick(page, 'button:has-text("Share")');
-  await page.waitForTimeout(5000);
-}
-```
-
-### File Download Pattern
-```javascript
-// Download any generated file from a platform
-async function downloadFile(page, downloadSelector, outputPath) {
-  // Set up download listener
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    page.click(downloadSelector)
-  ]);
-
-  // Save to workspace
-  await download.saveAs(outputPath);
-  return outputPath;
-}
-
-// Alternative: download from image URL
-async function downloadFromUrl(page, imageUrl, outputPath) {
-  const response = await page.request.get(imageUrl);
-  const buffer = await response.body();
-  fs.writeFileSync(outputPath, buffer);
-  return outputPath;
-}
-```
-
-## Multi-Platform Pipeline (Browser)
-
-### Full Video Pipeline Example
-```
-1. Login to ChatGPT → generate script (text conversation)
-2. Login to ChatGPT → generate scene images (image generation)
-3. Download all images to local workspace
-4. Login to ElevenLabs → generate voiceover from script → download MP3
-5. Login to Higgsfield → upload image + audio → generate lip-sync video → download
-6. FFmpeg locally → merge clips, add transitions, subtitles, music
-7. Login to Instagram → upload final video as Reel with caption
-8. Login to TikTok → upload final video with adapted caption
-9. Login to YouTube → upload as Short with metadata
-```
-
-Each step uses the browser except FFmpeg (runs locally).
-
-## CAPTCHA Protocol
+### Interacting with Elements
+After taking a `snapshot`, each interactive element gets a **ref number**. Use these refs to interact:
 
 ```
-1. CAPTCHA detected (hCaptcha, reCAPTCHA, Cloudflare challenge)
-2. PAUSE all automation immediately
-3. NOTIFY user: "CAPTCHA on [platform] — solve via VNC at http://localhost:6080"
-4. WAIT for user to solve (check every 5 seconds if CAPTCHA is gone)
-5. RESUME automation
-6. SLOW DOWN: increase delays by 2x for next 10 minutes
+browser click 12                 — Click element with ref 12
+browser click 12 --double        — Double-click
+browser type 23 "hello@email.com" — Type text into element ref 23
+browser type 23 "text" --submit  — Type and press Enter
+browser press Enter              — Press a key
+browser press Tab                — Press Tab
+browser hover 44                 — Hover over element
+browser select 9 "Option A"     — Select dropdown option
+browser scrollintoview 15       — Scroll element into view
+browser drag 10 11              — Drag from ref 10 to ref 11
 ```
 
-## Error Recovery
+### Forms
+```
+browser fill --fields '[{"ref":"1","value":"user@email.com"},{"ref":"2","value":"mypassword"}]'
+```
 
-| Error | Action |
-|-------|--------|
-| Session expired | Re-login with credentials, save new session |
-| Element not found | Wait 5s, retry. If 3 failures, page may have changed — notify user |
-| CAPTCHA | Pause, notify user, wait for VNC solve |
-| Rate limited | Wait 5-15 minutes, then retry with slower pace |
-| Page crash | Restart browser, restore session, retry |
-| Download failed | Retry download 3 times, then try screenshot as fallback |
-| Login failed | Check credentials, retry once. If still fails, notify user |
-| 2FA required | Use TOTP secret if available, otherwise ask user |
+### File Upload & Download
+```
+browser upload /path/to/file.pdf          — Arm file upload for next file chooser
+browser download 15 --save /path/out.png  — Click ref 15 and save download
+browser waitfordownload                   — Wait for next download
+```
 
-## Browser Resource Management
+### Cookies & Storage
+```
+browser cookies                          — Read all cookies
+browser cookies --set '[{"name":"token","value":"abc","domain":".example.com"}]'
+browser storage                          — Read localStorage
+browser storage --set '{"key":"value"}'
+```
 
-- Maximum 3 tabs open simultaneously (prevent memory issues)
-- Close tabs after completing each platform's task
-- Clear browser cache weekly to prevent storage bloat
-- Restart browser every 50 operations for stability
-- Monitor memory usage — restart if Chromium exceeds 2GB
+### Dialogs
+```
+browser dialog --accept           — Accept next alert/confirm/prompt
+browser dialog --dismiss          — Dismiss next dialog
+```
+
+### Advanced
+```
+browser evaluate --fn '(el) => el.textContent' --ref 7   — Run JS on element
+browser console --level error     — Get console errors
+browser requests                  — Get recent network requests
+browser wait --text "Done"        — Wait for text to appear
+browser wait --url "dashboard"    — Wait for URL to contain string
+browser pdf                       — Save page as PDF
+browser trace start/stop          — Record Playwright trace
+```
+
+---
+
+## Login Workflow Pattern
+
+Every platform login follows this pattern:
+
+### Step 1: Navigate to login page
+```
+browser navigate https://chat.openai.com
+browser snapshot
+```
+
+### Step 2: Read the snapshot, find the login elements (email field, password field, buttons)
+The snapshot returns numbered refs like:
+```
+[1] textbox "Email address"
+[2] button "Continue"
+```
+
+### Step 3: Fill and submit
+```
+browser type 1 "user@email.com"
+browser click 2
+browser snapshot
+browser type 3 "mypassword"
+browser click 4
+```
+
+### Step 4: Verify login succeeded
+```
+browser snapshot
+```
+Check if dashboard/home elements are visible.
+
+### Step 5: Save cookies for next time
+```
+browser cookies
+```
+Save the cookies so you can restore the session later without logging in again.
+
+---
+
+## Platform Login Examples
+
+### ChatGPT Login → Image Generation
+```
+1. browser navigate https://chat.openai.com
+2. browser snapshot → find "Log in" button → browser click [ref]
+3. browser snapshot → find email field → browser type [ref] "email"
+4. browser click [continue ref]
+5. browser snapshot → find password field → browser type [ref] "password"
+6. browser click [submit ref]
+7. browser wait --text "New chat" (or wait for chat input to appear)
+8. browser snapshot → find message input
+9. browser type [ref] "Generate an image: a sunset over mountains, photorealistic, 4K"
+10. browser press Enter
+11. browser wait --text "" (wait 30-60s for image)
+12. browser snapshot → find generated image → browser screenshot --ref [img ref]
+```
+
+### ElevenLabs Login → Generate Voiceover
+```
+1. browser navigate https://elevenlabs.io/sign-in
+2. browser snapshot → fill email, password → submit
+3. browser navigate https://elevenlabs.io/app/speech-synthesis
+4. browser snapshot → find voice dropdown → browser select [ref] "Rachel"
+5. browser snapshot → find text area → browser type [ref] "Welcome to our product..."
+6. browser snapshot → find Generate button → browser click [ref]
+7. browser wait --text "Download" (wait for audio to render)
+8. browser snapshot → find download button → browser download [ref] --save /path/voiceover.mp3
+```
+
+### Higgsfield Login → Avatar Generation
+```
+1. browser navigate https://platform.higgsfield.ai/login
+2. browser snapshot → fill credentials → submit
+3. Navigate to Soul section
+4. browser snapshot → find prompt field → type avatar description
+5. browser click Generate → wait for result
+6. browser download [ref] --save /path/avatar.png
+```
+
+### Instagram Login → Post Content
+```
+1. browser navigate https://www.instagram.com/accounts/login/
+2. browser snapshot → fill username, password → submit
+3. browser wait --url "instagram.com" (wait for redirect to feed)
+4. browser snapshot → find "New post" button → click
+5. browser upload /path/to/image.jpg (arm file upload)
+6. browser snapshot → click through Next/filters
+7. browser snapshot → find caption field → type caption + hashtags
+8. browser snapshot → find Share button → click
+```
+
+### Midjourney via Discord
+```
+1. browser navigate https://discord.com/login
+2. browser snapshot → fill email, password → submit
+3. Navigate to Midjourney bot DM
+4. browser snapshot → find message input
+5. browser type [ref] "/imagine prompt: beautiful landscape --ar 16:9 --v 6.1"
+6. browser press Enter
+7. Wait 60-90s, then browser snapshot to check for generated images
+8. browser snapshot → find U1/U2/U3/U4 buttons → click to upscale
+9. browser snapshot → find upscaled image → screenshot or download
+```
+
+---
+
+## Session Persistence with Cookies
+
+### Save session after login
+```
+browser cookies
+```
+Store the output. On next use, restore with:
+```
+browser cookies --set '[...saved cookies...]'
+browser navigate https://platform.com
+browser snapshot  → verify still logged in
+```
+
+If session expired (redirected to login page), re-login with credentials.
+
+---
+
+## Best Practices
+
+### Human-Like Behavior
+- Wait 1-3 seconds between actions (don't rush)
+- Take snapshots before every interaction to see current state
+- Don't click elements you can't see — use `scrollintoview` first
+- Handle unexpected popups (cookie banners, notifications) by dismissing them
+
+### Error Recovery
+- If element not found: take new snapshot, the page may have updated
+- If click doesn't work: try `scrollintoview` first, then click
+- If page is loading: use `browser wait --text "expected text"`
+- If login fails: check credentials, try again once
+- If CAPTCHA appears: notify user, wait for manual solve
+
+### Multiple Platforms
+- Open each platform in a separate tab
+- Use `browser tabs` to list them
+- Use `browser focus <targetId>` to switch between platforms
+- Close tabs when done to save memory
+
+### Downloading Generated Content
+- Always download immediately — URLs may expire
+- Use `browser download [ref]` for download buttons
+- Use `browser screenshot --ref [ref]` to capture images directly from the page
+- For images without download buttons: right-click image → save, or extract URL from snapshot and use `browser evaluate`
