@@ -4,11 +4,15 @@ OpenClaw Content Engine operates entirely through browser automation. It logs in
 
 ## Architecture
 
-ClawBot runs inside a Docker container with:
-- **Chromium** browser (headless or visible via VNC)
-- **Xvfb** virtual display (DISPLAY=:99, 1920x1080)
-- **x11vnc + noVNC** for remote viewing/debugging (http://localhost:6080)
-- Browser automation via Playwright or Puppeteer
+You have a **built-in browser** via the lobster plugin. It uses Playwright and works on any OS (macOS, Linux, Windows) without Docker or Chrome.
+
+**Use the `browser` tool directly.** Do not say you lack browser access. Example:
+```
+browser open https://chat.openai.com
+browser snapshot
+browser click e12
+browser type e15 "hello"
+```
 
 All interactions happen through the browser — the same way a human would use these platforms.
 
