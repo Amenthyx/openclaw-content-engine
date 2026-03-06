@@ -802,41 +802,72 @@ restart_gateway() {
     fi
 
     # ---- STEP 4: Install and start node host ----
-    # The NODE HOST is what provides tools (browser, exec, camera, screen)
-    # to the agent. Without it, the agent has zero tools — only messaging.
-    log "  Installing node host service (provides browser + exec tools to agent)..."
+    # The NODE HOST provides tools (browser, exec, camera, screen) to the agent.
+    # Without it, the agent has zero tools — only messaging.
+    # Docs: https://docs.openclaw.ai/cli/node
+    log "  Installing node host (provides browser + exec tools to agent)..."
 
-    # Stop existing node host if running
+    # Get gateway port
+    local gw_host="127.0.0.1"
+
+    # Stop existing node host
     "$OC_BIN" node stop 2>/dev/null || true
     sleep 1
 
-    # Install as system service (launchd on macOS, systemd on Linux, schtasks on Windows)
-    "$OC_BIN" node install 2>/dev/null || {
-        warn "  node install failed — trying to run directly"
+    # Install as system service with explicit gateway connection
+    # --force overwrites existing installation if present
+    "$OC_BIN" node install --host "$gw_host" --port "$gw_port" --force 2>/dev/null || {
+        warn "  node install failed — trying foreground start"
     }
 
-    # Start/restart the node host
+    # Start/restart the node host service
     "$OC_BIN" node restart 2>/dev/null || {
-        # Fallback: run in background
+        # Fallback: run in background with explicit gateway connection
         log "  Starting node host in background..."
         case "$OS_TYPE" in
             windows)
-                "$OC_BIN" node run >/dev/null 2>&1 &
+                "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
                 disown "$!" 2>/dev/null || true
                 ;;
             *)
-                nohup "$OC_BIN" node run >/dev/null 2>&1 &
+                nohup "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
                 disown 2>/dev/null || true
                 ;;
         esac
     }
 
-    # ---- STEP 5: Wait for node to pair with gateway ----
+    # ---- STEP 5: Approve the node pairing request ----
+    # First connection creates a pending DEVICE pairing request.
+    # Must be approved via "openclaw devices approve" (not nodes approve).
+    log "  Waiting for node pairing request..."
+    sleep 5
+
+    # List pending device requests and auto-approve
+    local devices_out
+    devices_out=$("$OC_BIN" devices list 2>&1 || true)
+    log "  Devices: $devices_out"
+
+    # Try to approve any pending pairing requests
+    # Extract request IDs from devices list output
+    local request_ids
+    request_ids=$(echo "$devices_out" | grep -oE '[a-f0-9-]{8,}' | head -5)
+    if [ -n "$request_ids" ]; then
+        for rid in $request_ids; do
+            log "  Approving device pairing: $rid"
+            "$OC_BIN" devices approve "$rid" 2>/dev/null || true
+        done
+    fi
+
+    # Also try approve --all and other variations
+    "$OC_BIN" devices approve --all 2>/dev/null || true
+    "$OC_BIN" nodes approve --all 2>/dev/null || true
+
+    # ---- STEP 6: Wait for node to connect ----
     log "  Waiting for node host to connect..."
     local node_attempts=0
     local node_up=false
     while [ "$node_attempts" -lt 10 ]; do
-        sleep 2
+        sleep 3
         node_attempts=$((node_attempts + 1))
         local nodes_out
         nodes_out=$("$OC_BIN" nodes status 2>&1 || true)
@@ -844,33 +875,33 @@ restart_gateway() {
             node_up=true
             break
         fi
+        # Check for new pending requests during wait
+        local new_pending
+        new_pending=$("$OC_BIN" devices list 2>&1 || true)
+        local new_rids
+        new_rids=$(echo "$new_pending" | grep -oE '[a-f0-9-]{8,}' | head -5)
+        for rid in $new_rids; do
+            "$OC_BIN" devices approve "$rid" 2>/dev/null || true
+        done
     done
 
     if $node_up; then
         log "  Node host: CONNECTED (agent now has browser + exec tools)"
     else
         warn "  Node host not connected yet"
-        warn "  Check manually: openclaw nodes status"
-        warn "  If 0 connected, run: openclaw node install && openclaw node restart"
+        warn "  Manual fix:"
+        warn "    1. openclaw devices list          (find pending request)"
+        warn "    2. openclaw devices approve <id>   (approve it)"
+        warn "    3. openclaw nodes status           (verify Connected: 1+)"
     fi
 
-    # ---- STEP 6: Verify browser is accessible to agent ----
+    # ---- Verify browser is accessible ----
     local browser_status
     browser_status=$("$OC_BIN" browser status 2>&1 || true)
     if echo "$browser_status" | grep -qi "enabled: true"; then
         log "  Browser service: ACTIVE"
     else
         warn "  Browser service status unclear — test with: openclaw browser status"
-    fi
-
-    # Auto-approve any pending node pairing requests
-    local pending
-    pending=$("$OC_BIN" nodes pending 2>&1 || true)
-    if echo "$pending" | grep -qi "pending\|request"; then
-        log "  Auto-approving pending node pairing..."
-        # Try to approve all pending requests
-        "$OC_BIN" nodes approve --all 2>/dev/null || \
-        "$OC_BIN" nodes approve 2>/dev/null || true
     fi
 }
 
@@ -954,7 +985,10 @@ verify() {
                 log "  Node host: CONNECTED (agent has tools)"
             else
                 err "  Node host: NOT CONNECTED (agent has NO tools!)"
-                err "  Fix: openclaw node install && openclaw node restart"
+                err "  Fix:"
+                err "    1. openclaw devices list          (find pending request)"
+                err "    2. openclaw devices approve <id>   (approve it)"
+                err "    3. openclaw nodes status           (verify Connected: 1+)"
             fi
         fi
 

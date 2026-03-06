@@ -614,24 +614,49 @@ function Restart-Gateway {
     }
 
     # Step 4: Install and start node host (provides tools to agent)
-    Log "  Installing node host service (provides browser + exec tools to agent)..."
+    # Docs: https://docs.openclaw.ai/cli/node
+    Log "  Installing node host (provides browser + exec tools to agent)..."
     try { & $OcBin node stop 2>$null } catch {}
     Start-Sleep -Seconds 1
 
-    try { & $OcBin node install 2>$null } catch { Warn "  node install failed" }
+    $gwHost = "127.0.0.1"
+    try { & $OcBin node install --host $gwHost --port $gwPort --force 2>$null } catch { Warn "  node install failed" }
     try { & $OcBin node restart 2>$null } catch {
         Log "  Starting node host in background..."
-        Start-Process -FilePath $OcBin -ArgumentList "node","run" -WindowStyle Hidden
+        Start-Process -FilePath $OcBin -ArgumentList "node","run","--host",$gwHost,"--port",$gwPort -WindowStyle Hidden
     }
 
-    # Step 5: Wait for node to pair
+    # Step 5: Approve device pairing request
+    Log "  Waiting for node pairing request..."
+    Start-Sleep -Seconds 5
+
+    # Auto-approve pending device pairing requests
+    try {
+        $devicesOut = & $OcBin devices list 2>$null | Out-String
+        Log "  Devices: $devicesOut"
+        $ids = [regex]::Matches($devicesOut, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+        foreach ($rid in $ids) {
+            Log "  Approving device pairing: $rid"
+            try { & $OcBin devices approve $rid 2>$null } catch {}
+        }
+    } catch {}
+    try { & $OcBin devices approve --all 2>$null } catch {}
+    try { & $OcBin nodes approve --all 2>$null } catch {}
+
+    # Step 6: Wait for node to connect
     Log "  Waiting for node host to connect..."
     $nodeUp = $false
     for ($i = 0; $i -lt 10; $i++) {
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 3
         try {
             $nodesOut = & $OcBin nodes status 2>$null | Out-String
             if ($nodesOut -match "Connected: [1-9]") { $nodeUp = $true; break }
+        } catch {}
+        # Check for new pending requests
+        try {
+            $newDev = & $OcBin devices list 2>$null | Out-String
+            $newIds = [regex]::Matches($newDev, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+            foreach ($rid in $newIds) { try { & $OcBin devices approve $rid 2>$null } catch {} }
         } catch {}
     }
 
@@ -639,17 +664,11 @@ function Restart-Gateway {
         Log "  Node host: CONNECTED (agent now has browser + exec tools)"
     } else {
         Warn "  Node host not connected yet"
-        Warn "  Fix: openclaw node install; openclaw node restart"
+        Warn "  Manual fix:"
+        Warn "    1. openclaw devices list          (find pending request)"
+        Warn "    2. openclaw devices approve <id>   (approve it)"
+        Warn "    3. openclaw nodes status           (verify Connected: 1+)"
     }
-
-    # Auto-approve pending node pairings
-    try {
-        $pendingOut = & $OcBin nodes pending 2>$null | Out-String
-        if ($pendingOut -match "pending|request") {
-            Log "  Auto-approving pending node pairing..."
-            & $OcBin nodes approve --all 2>$null
-        }
-    } catch {}
 }
 
 # ============================================================================
