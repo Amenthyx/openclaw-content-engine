@@ -1,0 +1,532 @@
+# ============================================================================
+# Content Engine — Windows PowerShell Installer
+# Configures ALL OpenClaw plugins, tools, and settings for full autonomy
+# Run: powershell -ExecutionPolicy Bypass -File install.ps1
+# ============================================================================
+$ErrorActionPreference = "Stop"
+
+function Log($msg)  { Write-Host "[Content-Engine] $msg" -ForegroundColor Green }
+function Warn($msg) { Write-Host "[Content-Engine] $msg" -ForegroundColor Yellow }
+function Err($msg)  { Write-Host "[Content-Engine] $msg" -ForegroundColor Red }
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$KnowledgeDir = Join-Path $ScriptDir "knowledge"
+$SkillDir = Join-Path $ScriptDir "skills\content-engine"
+$CredsTemplate = Join-Path $ScriptDir "credentials-template.json"
+
+$InstallMode = ""
+$OpenClawHome = ""
+$ContainerName = ""
+$OcBin = ""
+
+# ============================================================================
+# Find openclaw binary
+# ============================================================================
+function Find-OpenClaw {
+    # 1. PATH
+    $found = Get-Command openclaw -ErrorAction SilentlyContinue
+    if ($found) { $script:OcBin = $found.Source; return $true }
+
+    # 2. npx cache
+    $npxBase = Join-Path $env:LOCALAPPDATA "npm-cache\_npx"
+    if (Test-Path $npxBase) {
+        $bins = Get-ChildItem -Path $npxBase -Recurse -Filter "openclaw.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($bins) { $script:OcBin = $bins.FullName; return $true }
+    }
+
+    # 3. Global npm
+    $npmGlobal = Join-Path $env:APPDATA "npm\openclaw.cmd"
+    if (Test-Path $npmGlobal) { $script:OcBin = $npmGlobal; return $true }
+
+    # 4. Roaming npm
+    $npmRoaming = Join-Path $env:APPDATA "npm\openclaw"
+    if (Test-Path $npmRoaming) { $script:OcBin = $npmRoaming; return $true }
+
+    return $false
+}
+
+# ============================================================================
+# Run openclaw config commands
+# ============================================================================
+function Oc-Config {
+    param([string[]]$Args)
+    if ($InstallMode -eq "local" -and $OcBin) {
+        try { & $OcBin config @Args 2>$null } catch {}
+    } elseif ($InstallMode -eq "docker") {
+        try { docker exec -u node $ContainerName openclaw config @Args 2>$null } catch {}
+    }
+}
+
+function Oc-Cmd {
+    param([string[]]$Args)
+    if ($InstallMode -eq "local" -and $OcBin) {
+        try { & $OcBin @Args 2>$null } catch {}
+    } elseif ($InstallMode -eq "docker") {
+        try { docker exec -u node $ContainerName openclaw @Args 2>$null } catch {}
+    }
+}
+
+# ============================================================================
+# Detect installations
+# ============================================================================
+function Detect-Installations {
+    Write-Host ""
+    Log "Scanning for OpenClaw installations..."
+    Write-Host ""
+
+    $foundLocal = $false
+    $foundDocker = $false
+    $localPath = ""
+    $dockerContainers = @()
+
+    # Check candidate paths
+    $candidates = @(
+        (Join-Path $env:USERPROFILE ".openclaw"),
+        (Join-Path $env:APPDATA "openclaw"),
+        "C:\Users\$env:USERNAME\.openclaw"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c -PathType Container) {
+            $localPath = $c
+            $foundLocal = $true
+            break
+        }
+    }
+
+    # Find binary
+    if (Find-OpenClaw) {
+        Log "  Binary: $OcBin"
+    } else {
+        Warn "  openclaw binary not found"
+    }
+
+    # Docker
+    $dockerAvailable = $null -ne (Get-Command docker -ErrorAction SilentlyContinue)
+    if ($dockerAvailable) {
+        try {
+            $dockerContainers = docker ps --format '{{.Names}}' 2>$null | Where-Object { $_ -match "claw" }
+            if ($dockerContainers) { $foundDocker = $true }
+        } catch {}
+    }
+
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host "  OpenClaw Content Engine Installer" -ForegroundColor Cyan
+    Write-Host "  OS: Windows | PowerShell $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Detected:" -NoNewline; Write-Host ""
+
+    if ($foundLocal) { Write-Host "  [LOCAL]   $localPath" -ForegroundColor Green }
+    if ($foundDocker) {
+        Write-Host "  [DOCKER]  Containers:" -ForegroundColor Green
+        foreach ($n in $dockerContainers) { Write-Host "            - $n" }
+    }
+    if (-not $foundLocal -and -not $foundDocker) {
+        Write-Host "  No OpenClaw installation detected." -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Where do you want to install?"
+    Write-Host ""
+    Write-Host "  1) Local install"
+    if ($foundLocal) { Write-Host "     -> $localPath" } else { Write-Host "     -> $env:USERPROFILE\.openclaw" }
+    Write-Host ""
+    Write-Host "  2) Docker container"
+    if ($foundDocker) { Write-Host "     -> $($dockerContainers[0])" } else { Write-Host "     -> Specify name" }
+    Write-Host ""
+    Write-Host "  3) Custom path"
+    Write-Host ""
+
+    while ($true) {
+        $choice = Read-Host "  Choose [1/2/3]"
+        switch ($choice) {
+            "1" {
+                $script:InstallMode = "local"
+                $script:OpenClawHome = if ($localPath) { $localPath } else { Join-Path $env:USERPROFILE ".openclaw" }
+                break
+            }
+            "2" {
+                if (-not $dockerAvailable) { Err "Docker not installed."; continue }
+                $script:InstallMode = "docker"
+                if ($foundDocker) {
+                    $default = $dockerContainers[0]
+                    $cn = Read-Host "  Container [$default]"
+                    $script:ContainerName = if ($cn) { $cn } else { $default }
+                } else {
+                    $script:ContainerName = Read-Host "  Container name"
+                    if (-not $script:ContainerName) { Err "Required."; continue }
+                }
+                $running = docker ps --format '{{.Names}}' 2>$null
+                if ($running -notcontains $script:ContainerName) { Err "'$($script:ContainerName)' not running."; continue }
+                break
+            }
+            "3" {
+                $cp = Read-Host "  OpenClaw config path"
+                if (-not $cp) { Err "Required."; continue }
+                $script:InstallMode = "local"
+                $script:OpenClawHome = $cp
+                break
+            }
+            default { Warn "Enter 1, 2, or 3." }
+        }
+        if ($script:InstallMode) { break }
+    }
+
+    Write-Host ""
+    if ($InstallMode -eq "local") { Log "Mode: LOCAL -> $OpenClawHome" }
+    else { Log "Mode: DOCKER -> $ContainerName" }
+    Write-Host ""
+}
+
+# ============================================================================
+# [1/7] Install knowledge
+# ============================================================================
+function Install-Knowledge {
+    Log "=== [1/7] Installing Knowledge Base ==="
+    $files = Get-ChildItem -Path $KnowledgeDir -Filter "*.md"
+
+    if ($InstallMode -eq "local") {
+        $dest = Join-Path $OpenClawHome "memory\content-engine"
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        foreach ($f in $files) {
+            Copy-Item $f.FullName -Destination (Join-Path $dest $f.Name) -Force
+        }
+    } else {
+        docker exec $ContainerName bash -c "mkdir -p /home/node/.openclaw/memory/content-engine"
+        foreach ($f in $files) {
+            docker cp $f.FullName "${ContainerName}:/home/node/.openclaw/memory/content-engine/$($f.Name)"
+        }
+        docker exec $ContainerName bash -c "chown -R node:node /home/node/.openclaw/memory" 2>$null
+    }
+    Log "  $($files.Count) knowledge files installed"
+}
+
+# ============================================================================
+# [2/7] Install skill
+# ============================================================================
+function Install-Skill {
+    Log "=== [2/7] Installing Skill ==="
+    $skillFile = Join-Path $SkillDir "SKILL.md"
+
+    if ($InstallMode -eq "local") {
+        $dest = Join-Path $OpenClawHome "skills\content-engine"
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        Copy-Item $skillFile -Destination (Join-Path $dest "SKILL.md") -Force
+        $scriptsDir = Join-Path $SkillDir "scripts"
+        if (Test-Path $scriptsDir) {
+            Copy-Item $scriptsDir -Destination $dest -Recurse -Force
+        }
+    } else {
+        docker exec $ContainerName bash -c "mkdir -p /home/node/.openclaw/skills/content-engine"
+        docker cp $skillFile "${ContainerName}:/home/node/.openclaw/skills/content-engine/SKILL.md"
+        docker exec $ContainerName bash -c "chown -R node:node /home/node/.openclaw/skills/content-engine" 2>$null
+    }
+    Log "  content-engine skill installed"
+}
+
+# ============================================================================
+# [3/7] Configure OpenClaw
+# ============================================================================
+function Configure-OpenClaw {
+    Log "=== [3/7] Configuring OpenClaw for Full Autonomy ==="
+
+    if ($InstallMode -eq "local" -and -not $OcBin) {
+        Warn "  openclaw CLI not found — writing config via JSON"
+        Configure-ViaJson
+        return
+    }
+
+    $settings = @(
+        @("plugins.entries.lobster.enabled", "true", "lobster (browser)"),
+        @("plugins.entries.llm-task.enabled", "true", "llm-task (background)"),
+        @("tools.allow", '["*"]', "allow all tools"),
+        @("tools.elevated.enabled", "true", "elevated tools"),
+        @("tools.exec.timeoutSec", "1800", "exec timeout 30min"),
+        @("tools.exec.notifyOnExit", "true", "exec notify"),
+        @("agents.defaults.sandbox.mode", "off", "sandbox off"),
+        @("agents.defaults.maxConcurrent", "4", "max agents"),
+        @("agents.defaults.subagents.maxConcurrent", "8", "max subagents"),
+        @("agents.defaults.compaction.mode", "safeguard", "compaction"),
+        @("commands.native", "auto", "native commands"),
+        @("commands.nativeSkills", "auto", "native skills"),
+        @("skills.install.nodeManager", "npm", "node manager")
+    )
+
+    foreach ($s in $settings) {
+        Log "  $($s[2])..."
+        Oc-Config -Args @("set", $s[0], $s[1])
+    }
+
+    if ($InstallMode -eq "local") {
+        $ws = (Join-Path $OpenClawHome "workspace").Replace("\", "/")
+        Log "  workspace..."
+        Oc-Config -Args @("set", "agents.defaults.workspace", $ws)
+    }
+
+    Log "  All settings applied"
+}
+
+function Configure-ViaJson {
+    $configFile = Join-Path $OpenClawHome "openclaw.json"
+    $ws = (Join-Path $OpenClawHome "workspace").Replace("\", "/")
+
+    # Use Node.js
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        Log "  Writing config via Node.js..."
+        $nodeScript = @"
+var fs = require('fs');
+var p = process.argv[1], ws = process.argv[2];
+var cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(p, 'utf8')); } catch(e) {}
+if (!cfg.plugins) cfg.plugins = {};
+if (!cfg.plugins.entries) cfg.plugins.entries = {};
+cfg.plugins.entries.lobster = { enabled: true };
+cfg.plugins.entries['llm-task'] = { enabled: true };
+if (!cfg.tools) cfg.tools = {};
+cfg.tools.allow = ['*'];
+if (!cfg.tools.elevated) cfg.tools.elevated = {};
+cfg.tools.elevated.enabled = true;
+if (!cfg.tools.exec) cfg.tools.exec = {};
+cfg.tools.exec.timeoutSec = 1800;
+cfg.tools.exec.notifyOnExit = true;
+if (!cfg.agents) cfg.agents = {};
+if (!cfg.agents.defaults) cfg.agents.defaults = {};
+cfg.agents.defaults.sandbox = { mode: 'off' };
+cfg.agents.defaults.maxConcurrent = 4;
+cfg.agents.defaults.subagents = { maxConcurrent: 8 };
+cfg.agents.defaults.compaction = { mode: 'safeguard' };
+cfg.agents.defaults.workspace = ws;
+if (!cfg.commands) cfg.commands = {};
+cfg.commands.native = 'auto';
+cfg.commands.nativeSkills = 'auto';
+if (!cfg.skills) cfg.skills = {};
+cfg.skills.install = { nodeManager: 'npm' };
+fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+"@
+        node -e $nodeScript $configFile $ws
+        Log "  Config written"
+        return
+    }
+
+    # Use Python
+    $py = Get-Command python3 -ErrorAction SilentlyContinue
+    if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
+    if ($py) {
+        Log "  Writing config via Python..."
+        $pyScript = @"
+import json, sys, os
+path, ws = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f: cfg = json.load(f)
+    except: pass
+cfg.setdefault("plugins", {}).setdefault("entries", {})
+cfg["plugins"]["entries"]["lobster"] = {"enabled": True}
+cfg["plugins"]["entries"]["llm-task"] = {"enabled": True}
+cfg.setdefault("tools", {})
+cfg["tools"]["allow"] = ["*"]
+cfg["tools"].setdefault("elevated", {})["enabled"] = True
+cfg["tools"].setdefault("exec", {})
+cfg["tools"]["exec"]["timeoutSec"] = 1800
+cfg["tools"]["exec"]["notifyOnExit"] = True
+cfg.setdefault("agents", {}).setdefault("defaults", {})
+cfg["agents"]["defaults"]["sandbox"] = {"mode": "off"}
+cfg["agents"]["defaults"]["maxConcurrent"] = 4
+cfg["agents"]["defaults"]["subagents"] = {"maxConcurrent": 8}
+cfg["agents"]["defaults"]["compaction"] = {"mode": "safeguard"}
+cfg["agents"]["defaults"]["workspace"] = ws
+cfg.setdefault("commands", {})
+cfg["commands"]["native"] = "auto"
+cfg["commands"]["nativeSkills"] = "auto"
+cfg.setdefault("skills", {})
+cfg["skills"]["install"] = {"nodeManager": "npm"}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+"@
+        & $py.Source -c $pyScript $configFile $ws
+        Log "  Config written"
+        return
+    }
+
+    Err "  No node or python found. Config NOT written."
+    Err "  Install Node.js or openclaw CLI and re-run."
+}
+
+# ============================================================================
+# [4/7] Credentials
+# ============================================================================
+function Deploy-Credentials {
+    Log "=== [4/7] Setting Up Credentials ==="
+
+    if ($InstallMode -eq "local") {
+        New-Item -ItemType Directory -Path (Join-Path $OpenClawHome "sessions") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $OpenClawHome "workspace") -Force | Out-Null
+        $credsDest = Join-Path $OpenClawHome "credentials.json"
+        if (Test-Path $credsDest) {
+            Log "  credentials.json already exists — keeping it"
+        } else {
+            Copy-Item $CredsTemplate -Destination $credsDest
+            Warn "  credentials.json created at:"
+            Warn "  $credsDest"
+            Warn "  >>> EDIT THIS FILE and add your platform logins <<<"
+        }
+    } else {
+        docker exec $ContainerName bash -c "mkdir -p /home/node/.openclaw/sessions /home/node/.openclaw/workspace"
+        $exists = docker exec $ContainerName bash -c "test -f /home/node/.openclaw/credentials.json && echo yes" 2>$null
+        if ($exists -eq "yes") {
+            Log "  credentials.json already exists — keeping it"
+        } else {
+            docker cp $CredsTemplate "${ContainerName}:/home/node/.openclaw/credentials.json"
+            docker exec $ContainerName bash -c "chown node:node /home/node/.openclaw/credentials.json && chmod 600 /home/node/.openclaw/credentials.json"
+            Warn "  credentials.json deployed. Edit with:"
+            Warn "  docker exec -it $ContainerName nano /home/node/.openclaw/credentials.json"
+        }
+    }
+}
+
+# ============================================================================
+# [5/7] Reindex memory
+# ============================================================================
+function Reindex-Memory {
+    Log "=== [5/7] Indexing Memory ==="
+    if ($OcBin -or $InstallMode -eq "docker") {
+        Oc-Cmd -Args @("memory", "index", "--force")
+        Log "  Memory indexed"
+    } else {
+        Warn "  Skipped — run manually: openclaw memory index --force"
+    }
+}
+
+# ============================================================================
+# [6/7] Gateway restart
+# ============================================================================
+function Restart-Gateway {
+    Log "=== [6/7] Gateway Restart ==="
+    if ($InstallMode -eq "docker") {
+        Warn "  Restart container: docker restart $ContainerName"
+    } else {
+        Warn "  Restart gateway: openclaw gateway stop; openclaw gateway"
+    }
+}
+
+# ============================================================================
+# [7/7] Verify
+# ============================================================================
+function Verify-Install {
+    Log "=== [7/7] Verifying Installation ==="
+
+    if ($InstallMode -eq "local") {
+        $kDir = Join-Path $OpenClawHome "memory\content-engine"
+        if (Test-Path $kDir) {
+            $kCount = (Get-ChildItem -Path $kDir -Filter "*.md").Count
+            Log "  Knowledge: $kCount files"
+        } else { Err "  Knowledge: NOT FOUND" }
+
+        $skillPath = Join-Path $OpenClawHome "skills\content-engine\SKILL.md"
+        if (Test-Path $skillPath) { Log "  Skill: INSTALLED" } else { Err "  Skill: NOT FOUND" }
+
+        $credsPath = Join-Path $OpenClawHome "credentials.json"
+        if (Test-Path $credsPath) { Log "  Credentials: PRESENT" } else { Warn "  Credentials: NOT FOUND" }
+
+        if ($OcBin) {
+            try {
+                $skillOut = & $OcBin skills list 2>$null | Out-String
+                if ($skillOut -match "content-engine") {
+                    if ($skillOut -match "ready.*content-engine|content-engine.*ready") {
+                        Log "  Skill status: READY"
+                    } else { Warn "  Skill visible (restart gateway for ready)" }
+                } else { Warn "  Skill not visible yet (restart gateway)" }
+            } catch {}
+        }
+
+        if (Test-Path (Join-Path $OpenClawHome "workspace")) { Log "  Workspace: OK" }
+        if (Test-Path (Join-Path $OpenClawHome "sessions")) { Log "  Sessions: OK" }
+    } else {
+        $c = docker exec $ContainerName bash -c "ls -1 /home/node/.openclaw/memory/content-engine/*.md 2>/dev/null | wc -l" 2>$null
+        if ([int]$c -gt 0) { Log "  Knowledge: $c files" } else { Err "  Knowledge: NOT FOUND" }
+    }
+}
+
+# ============================================================================
+# Summary
+# ============================================================================
+function Print-Summary {
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host "  Content Engine — Installation Complete" -ForegroundColor Cyan
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Mode: $($InstallMode.ToUpper()) on Windows (browser automation, no API keys)" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Installed:" -ForegroundColor Green
+    Write-Host "    - 13 knowledge files"
+    Write-Host "    - content-engine skill"
+    Write-Host "    - credentials.json template"
+    Write-Host ""
+    Write-Host "  Configured:" -ForegroundColor Green
+    Write-Host '    - lobster plugin        (browser tool)'
+    Write-Host '    - llm-task plugin       (background tasks)'
+    Write-Host '    - tools.allow = ["*"]   (full access)'
+    Write-Host '    - sandbox = off         (browser + filesystem)'
+    Write-Host '    - 4 agents / 8 subs    (parallel execution)'
+    Write-Host ""
+    Write-Host "  Next Steps:" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    1. Edit credentials.json with your logins"
+    if ($InstallMode -eq "local") {
+        Write-Host "       $OpenClawHome\credentials.json" -ForegroundColor Yellow
+    } else {
+        Write-Host "       docker exec -it $ContainerName nano /home/node/.openclaw/credentials.json" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "    2. Restart the gateway"
+    if ($InstallMode -eq "docker") {
+        Write-Host "       docker restart $ContainerName" -ForegroundColor Yellow
+    } else {
+        Write-Host "       openclaw gateway stop; openclaw gateway" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host '    3. Test via Telegram: "Open the browser and go to chat.openai.com"'
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host ""
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+function Main {
+    Log "OS: Windows PowerShell"
+
+    # Validate files exist
+    if (-not (Test-Path $KnowledgeDir)) {
+        Err "Knowledge directory not found: $KnowledgeDir"
+        Err "Run from the openclaw-content-engine directory."
+        exit 1
+    }
+    $mdCount = (Get-ChildItem -Path $KnowledgeDir -Filter "*.md" -ErrorAction SilentlyContinue).Count
+    if ($mdCount -eq 0) { Err "No .md files in $KnowledgeDir"; exit 1 }
+
+    if (-not (Test-Path (Join-Path $SkillDir "SKILL.md"))) {
+        Err "SKILL.md not found in $SkillDir"; exit 1
+    }
+    if (-not (Test-Path $CredsTemplate)) {
+        Err "credentials-template.json not found"; exit 1
+    }
+
+    Detect-Installations
+    Install-Knowledge
+    Install-Skill
+    Configure-OpenClaw
+    Deploy-Credentials
+    Reindex-Memory
+    Restart-Gateway
+    Verify-Install
+    Print-Summary
+}
+
+Main
