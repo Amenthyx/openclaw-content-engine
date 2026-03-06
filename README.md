@@ -63,24 +63,35 @@ You only need accounts for the platforms you want to use. The system works with 
 
 ## Installation
 
-### Step 1: Clone and Install
+### Step 1: Clone and Run the Installer
 
 ```bash
 git clone https://github.com/Amenthyx/openclaw-content-engine.git
 cd openclaw-content-engine
-bash install-to-clawbot.sh
+bash install.sh
 ```
 
-This will:
-1. Copy 13 knowledge files into ClawBot's memory
-2. Install the `content-engine` skill
-3. Deploy agent instructions for browser-based operation
-4. Create `credentials.json` template inside the container
-5. Set up sessions and workspace directories
-6. Trigger memory reindex
+The interactive installer will:
+1. **Auto-detect** your OpenClaw installation (local, Docker, or both)
+2. **Ask you to choose** where to install:
+   - `1) Local` — installs to `~/.openclaw/` (or detected path)
+   - `2) Docker` — installs into a running container
+   - `3) Custom path` — specify any directory
+3. Copy 13 knowledge files into ClawBot's memory
+4. Install the `content-engine` skill
+5. Deploy agent instructions for browser-based operation
+6. Create `credentials.json` template
+7. Set up sessions and workspace directories
+8. Trigger memory reindex
 
 ### Step 2: Add Your Login Credentials
 
+**Local install:**
+```bash
+nano ~/.openclaw/credentials.json
+```
+
+**Docker install:**
 ```bash
 docker exec -it clawbot nano /home/node/.openclaw/credentials.json
 ```
@@ -207,7 +218,8 @@ openclaw-content-engine/
 │   └── content-engine/
 │       └── SKILL.md                  # OpenClaw skill definition
 ├── credentials-template.json         # Template for platform logins
-├── install-to-clawbot.sh             # One-command ClawBot installer
+├── install.sh                        # Interactive installer (local/Docker/custom)
+├── install-to-clawbot.sh             # Docker-only installer (legacy)
 ├── deploy.sh                         # Generic deploy script
 └── README.md
 ```
