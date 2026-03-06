@@ -402,14 +402,67 @@ function Reindex-Memory {
 }
 
 # ============================================================================
-# [6/7] Gateway restart
+# [6/7] Restart gateway to load new config
 # ============================================================================
 function Restart-Gateway {
-    Log "=== [6/7] Gateway Restart ==="
+    Log "=== [6/7] Restarting Gateway (loading new config) ==="
+
     if ($InstallMode -eq "docker") {
-        Warn "  Restart container: docker restart $ContainerName"
+        Log "  Restarting Docker container $ContainerName..."
+        try { docker restart $ContainerName 2>$null; Log "  Container restarted" }
+        catch { Warn "  Could not restart — run: docker restart $ContainerName" }
+        Log "  Waiting for gateway..."
+        Start-Sleep -Seconds 8
+        return
+    }
+
+    if (-not $OcBin) {
+        Warn "  openclaw CLI not found — restart gateway manually after install"
+        return
+    }
+
+    # Step 1: Stop gateway
+    Log "  Stopping gateway..."
+    try { & $OcBin gateway stop 2>$null } catch {}
+    Start-Sleep -Seconds 2
+
+    # Step 2: Kill any process on gateway port 18789
+    $portInfo = netstat -ano 2>$null | Select-String ":18789\s.*LISTENING"
+    if ($portInfo) {
+        $pidMatch = $portInfo -match '\s(\d+)\s*$'
+        if ($pidMatch) {
+            $gwPid = ($Matches[1])
+            if ($gwPid -and $gwPid -ne "0") {
+                Log "  Killing gateway process (PID $gwPid)..."
+                try { Stop-Process -Id $gwPid -Force -ErrorAction SilentlyContinue } catch {}
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+
+    # Step 3: Start gateway fresh
+    Log "  Starting gateway with new config..."
+    $proc = Start-Process -FilePath $OcBin -ArgumentList "gateway" -WindowStyle Hidden -PassThru
+
+    # Step 4: Wait and verify
+    Log "  Waiting for gateway to start..."
+    $gwUp = $false
+    for ($i = 0; $i -lt 12; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $statusOut = & $OcBin gateway status 2>$null | Out-String
+            if ($statusOut -match "RPC probe: ok|Listening") {
+                $gwUp = $true
+                break
+            }
+        } catch {}
+    }
+
+    if ($gwUp) {
+        Log "  Gateway is running with new config"
     } else {
-        Warn "  Restart gateway: openclaw gateway stop; openclaw gateway"
+        Warn "  Gateway may not have started — check: openclaw gateway status"
+        Warn "  Start manually: openclaw gateway"
     }
 }
 

@@ -514,19 +514,95 @@ reindex_memory() {
 }
 
 # ============================================================================
-# [6/7] Restart gateway
+# [6/7] Restart gateway to load new config
 # ============================================================================
 restart_gateway() {
-    log "=== [6/7] Gateway Restart ==="
+    log "=== [6/7] Restarting Gateway (loading new config) ==="
 
     if [ "$INSTALL_MODE" = "docker" ]; then
-        warn "  Restart your container to apply changes:"
-        warn "  docker restart ${CONTAINER_NAME}"
-    elif [ -n "$OC_BIN" ]; then
-        warn "  Restart the gateway to apply config changes:"
-        warn "  ${OC_BIN} gateway stop && ${OC_BIN} gateway"
+        log "  Restarting Docker container ${CONTAINER_NAME}..."
+        docker restart "$CONTAINER_NAME" 2>/dev/null && log "  Container restarted" || warn "  Could not restart container — do it manually: docker restart ${CONTAINER_NAME}"
+        log "  Waiting for gateway to come back..."
+        sleep 8
+        return
+    fi
+
+    if [ -z "$OC_BIN" ]; then
+        warn "  openclaw CLI not found — restart gateway manually after install"
+        return
+    fi
+
+    # Step 1: Find and kill the running gateway process
+    log "  Stopping gateway..."
+    "$OC_BIN" gateway stop 2>/dev/null || true
+    sleep 2
+
+    # Kill any remaining openclaw gateway process by port
+    local gw_pid=""
+    case "$OS_TYPE" in
+        windows)
+            # Windows: use netstat to find PID on port 18789
+            gw_pid=$(netstat -ano 2>/dev/null | grep ":18789 " | grep "LISTENING" | awk '{print $5}' | head -1)
+            if [ -n "$gw_pid" ] && [ "$gw_pid" != "0" ]; then
+                log "  Killing gateway process (PID $gw_pid)..."
+                taskkill //PID "$gw_pid" //F 2>/dev/null || true
+                sleep 2
+            fi
+            ;;
+        linux|wsl|macos)
+            # Unix: use lsof or fuser
+            if command -v lsof >/dev/null 2>&1; then
+                gw_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+            elif command -v fuser >/dev/null 2>&1; then
+                gw_pid=$(fuser 18789/tcp 2>/dev/null | tr -d ' ')
+            fi
+            if [ -n "$gw_pid" ]; then
+                log "  Killing gateway process (PID $gw_pid)..."
+                kill "$gw_pid" 2>/dev/null || true
+                sleep 2
+                # Force kill if still running
+                kill -0 "$gw_pid" 2>/dev/null && kill -9 "$gw_pid" 2>/dev/null || true
+                sleep 1
+            fi
+            ;;
+    esac
+
+    # Step 2: Start gateway fresh in background
+    log "  Starting gateway with new config..."
+    case "$OS_TYPE" in
+        windows)
+            # On Windows/Git Bash, use start to detach
+            "$OC_BIN" gateway 2>/dev/null &
+            local bg_pid=$!
+            disown "$bg_pid" 2>/dev/null || true
+            ;;
+        *)
+            nohup "$OC_BIN" gateway >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            ;;
+    esac
+
+    # Step 3: Wait and verify
+    log "  Waiting for gateway to start..."
+    local attempts=0
+    local max_attempts=12
+    local gw_up=false
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        sleep 2
+        attempts=$((attempts + 1))
+        local status_out
+        status_out=$("$OC_BIN" gateway status 2>&1 || true)
+        if echo "$status_out" | grep -qi "RPC probe: ok\|Listening"; then
+            gw_up=true
+            break
+        fi
+    done
+
+    if $gw_up; then
+        log "  Gateway is running with new config"
     else
-        warn "  Restart your OpenClaw gateway to apply config changes."
+        warn "  Gateway may not have started — check with: openclaw gateway status"
+        warn "  You can start it manually: openclaw gateway"
     fi
 }
 
