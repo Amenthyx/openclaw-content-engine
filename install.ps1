@@ -227,6 +227,51 @@ function Install-Skill {
 }
 
 # ============================================================================
+# [2.5/7] Deploy agent identity (tells ClawBot it has browser + content tools)
+# ============================================================================
+function Install-Identity {
+    Log "=== [2.5/7] Installing Agent Identity ==="
+
+    $identitySrc = Join-Path $ScriptDir "IDENTITY.md"
+    if (-not (Test-Path $identitySrc)) {
+        Warn "  IDENTITY.md not found in project — skipping"
+        return
+    }
+
+    if ($InstallMode -eq "local") {
+        $ws = Join-Path $OpenClawHome "workspace"
+        if ($OcBin) {
+            try {
+                $cfgWs = & $OcBin config get agents.defaults.workspace 2>$null
+                if ($cfgWs -and $cfgWs -ne "undefined") { $ws = $cfgWs }
+            } catch {}
+        }
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+
+        $dest = Join-Path $ws "IDENTITY.md"
+        if (Test-Path $dest) {
+            Copy-Item $dest -Destination "$dest.bak" -Force
+            Log "  Backed up existing IDENTITY.md"
+        }
+        Copy-Item $identitySrc -Destination $dest -Force
+        Log "  IDENTITY.md deployed to $ws/"
+    } else {
+        $dockerWs = "/home/node/.openclaw/workspace"
+        docker exec $ContainerName bash -c "mkdir -p $dockerWs" 2>$null
+        $exists = docker exec $ContainerName bash -c "test -f $dockerWs/IDENTITY.md && echo yes" 2>$null
+        if ($exists -eq "yes") {
+            docker exec $ContainerName bash -c "cp $dockerWs/IDENTITY.md $dockerWs/IDENTITY.md.bak" 2>$null
+            Log "  Backed up existing IDENTITY.md"
+        }
+        docker cp $identitySrc "${ContainerName}:$dockerWs/IDENTITY.md"
+        docker exec $ContainerName bash -c "chown node:node $dockerWs/IDENTITY.md" 2>$null
+        Log "  IDENTITY.md deployed to container"
+    }
+
+    Log "  Agent now knows it has browser + content creation capabilities"
+}
+
+# ============================================================================
 # [3/7] Configure OpenClaw
 # ============================================================================
 function Configure-OpenClaw {
@@ -603,6 +648,7 @@ function Main {
     Detect-Installations
     Install-Knowledge
     Install-Skill
+    Install-Identity
     Configure-OpenClaw
     Deploy-Credentials
     Reindex-Memory
