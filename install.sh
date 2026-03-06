@@ -381,6 +381,16 @@ configure_via_cli() {
     log "  [Skills] nodeManager = npm..."
     oc_config set skills.install.nodeManager npm
 
+    # --- BROWSER PROFILE ---
+    # Set "openclaw" (headless Playwright) as default browser profile
+    # This works on fresh machines even without Chrome/Chromium installed
+    log "  [Browser] Setting default profile to 'openclaw' (headless Playwright)..."
+    oc_config set browser.defaultProfile openclaw
+
+    # Ensure the headless profile exists
+    log "  [Browser] Creating headless browser profile..."
+    oc_cmd browser create-profile --name openclaw --driver openclaw --color "#FF4500" 2>/dev/null || true
+
     log "  All settings applied"
 }
 
@@ -420,6 +430,8 @@ cfg.commands.native = 'auto';
 cfg.commands.nativeSkills = 'auto';
 if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
+if (!cfg.browser) cfg.browser = {};
+cfg.browser.defaultProfile = 'openclaw';
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
 " "$config_file" "$ws" 2>&1 && log "  Config written" || err "  Node.js config write failed"
 
@@ -455,6 +467,8 @@ cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
 cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
+cfg.setdefault("browser", {})
+cfg["browser"]["defaultProfile"] = "openclaw"
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")

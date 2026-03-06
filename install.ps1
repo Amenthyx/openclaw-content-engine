@@ -240,6 +240,7 @@ function Configure-OpenClaw {
 
     $settings = @(
         @("plugins.entries.lobster.enabled", "true", "lobster (browser)"),
+        @("browser.defaultProfile", "openclaw", "browser default profile (headless)"),
         @("plugins.entries.llm-task.enabled", "true", "llm-task (background)"),
         @("tools.allow", '["*"]', "allow all tools"),
         @("tools.elevated.enabled", "true", "elevated tools"),
@@ -265,6 +266,10 @@ function Configure-OpenClaw {
         Oc-Config -Args @("set", "agents.defaults.workspace", $ws)
     }
 
+    # Create headless browser profile (works without Chrome installed)
+    Log "  Creating headless browser profile..."
+    Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "openclaw", "--color", "#FF4500")
+
     Log "  All settings applied"
 }
 
@@ -283,6 +288,8 @@ try { cfg = JSON.parse(fs.readFileSync(p, 'utf8')); } catch(e) {}
 if (!cfg.plugins) cfg.plugins = {};
 if (!cfg.plugins.entries) cfg.plugins.entries = {};
 cfg.plugins.entries.lobster = { enabled: true };
+if (!cfg.browser) cfg.browser = {};
+cfg.browser.defaultProfile = 'openclaw';
 cfg.plugins.entries['llm-task'] = { enabled: true };
 if (!cfg.tools) cfg.tools = {};
 cfg.tools.allow = ['*'];
@@ -343,6 +350,8 @@ cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
 cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
+cfg.setdefault("browser", {})
+cfg["browser"]["defaultProfile"] = "openclaw"
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
