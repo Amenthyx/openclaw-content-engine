@@ -370,6 +370,12 @@ function Configure-OpenClaw {
     Log "  Installing lobster plugin..."
     Oc-Cmd -Args @("plugins", "install", "lobster")
 
+    # Install Playwright browsers (lobster needs these to function)
+    Log "  Installing Playwright browser binaries..."
+    try { npx playwright install chromium 2>$null } catch {}
+    Oc-Cmd -Args @("browser", "setup")
+    Oc-Cmd -Args @("browser", "install")
+
     # Create headless browser profile (works without Chrome installed)
     Log "  Creating headless browser profile..."
     Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "openclaw", "--color", "#FF4500")

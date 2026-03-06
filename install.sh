@@ -467,6 +467,15 @@ configure_via_cli() {
     log "  [Plugins] Ensuring lobster plugin is installed..."
     oc_cmd plugins install lobster 2>/dev/null || true
 
+    # Install Playwright browsers (lobster needs these to function)
+    log "  [Browser] Installing Playwright browser binaries..."
+    if command -v npx >/dev/null 2>&1; then
+        npx playwright install chromium 2>/dev/null || true
+    fi
+    # Also try OpenClaw's built-in browser setup
+    oc_cmd browser setup 2>/dev/null || true
+    oc_cmd browser install 2>/dev/null || true
+
     # --- TOOLS: FULL ACCESS ---
     log "  [Tools] Allowing ALL tools for ALL channels..."
     oc_config set tools.allow '["*"]'
@@ -894,6 +903,56 @@ verify() {
             && log "  Credentials: PRESENT" || warn "  Credentials: NOT FOUND"
     fi
 
+    # --- FULL DIAGNOSTIC DUMP ---
+    # This helps debug when the browser tool isn't loading
+    if [ -n "$OC_BIN" ] && [ "$INSTALL_MODE" = "local" ]; then
+        echo ""
+        log "  ─── DIAGNOSTIC: Tool & Plugin Status ───"
+
+        # List all available tools
+        log "  Available tools:"
+        local all_tools
+        all_tools=$("$OC_BIN" tools list 2>&1 || echo "(tools list failed)")
+        echo "$all_tools" | head -30 | while IFS= read -r line; do
+            echo "    $line"
+        done
+
+        # List plugins
+        log "  Plugin status:"
+        local all_plugins
+        all_plugins=$("$OC_BIN" plugins list 2>&1 || echo "(plugins list failed)")
+        echo "$all_plugins" | head -20 | while IFS= read -r line; do
+            echo "    $line"
+        done
+
+        # Browser status
+        log "  Browser status:"
+        local bstatus
+        bstatus=$("$OC_BIN" browser status 2>&1 || echo "(browser status failed)")
+        echo "$bstatus" | head -10 | while IFS= read -r line; do
+            echo "    $line"
+        done
+
+        # Agent identity
+        log "  Agent identity:"
+        local agent_info
+        agent_info=$("$OC_BIN" agents list 2>&1 || echo "(agents list failed)")
+        echo "$agent_info" | head -10 | while IFS= read -r line; do
+            echo "    $line"
+        done
+
+        # Config dump (key sections)
+        log "  Key config values:"
+        for key in plugins.entries.lobster.enabled browser.defaultProfile tools.allow agents.defaults.sandbox.mode tools.elevated.enabled; do
+            local val
+            val=$("$OC_BIN" config get "$key" 2>/dev/null || echo "?")
+            echo "    $key = $val"
+        done
+
+        log "  ─── END DIAGNOSTIC ───"
+    fi
+
+    echo ""
     if $ok; then
         log "  Verification PASSED"
     else
@@ -925,11 +984,14 @@ print_summary() {
     echo -e "  ${GREEN}Configured:${NC}"
     echo "    - lobster plugin        (browser tool for agent)"
     echo "    - llm-task plugin       (background task execution)"
+    echo "    - open-prose plugin     (text processing)"
+    echo "    - voice-call plugin     (audio capabilities)"
     echo '    - tools.allow = ["*"]   (full tool access)'
-    echo "    - tools.elevated        (elevated from Telegram)"
+    echo "    - tools.elevated        (elevated from ALL channels)"
     echo "    - exec timeout 30min    (long-running tasks)"
     echo "    - sandbox = off         (browser + filesystem)"
     echo "    - 4 agents / 8 subs    (parallel execution)"
+    echo "    - Playwright browsers   (headless Chromium)"
     echo "    - workspace directory   (asset storage)"
     echo ""
 
