@@ -43,6 +43,8 @@ OPENCLAW_HOME=""
 CONTAINER_NAME=""
 OC_BIN=""
 OS_TYPE=""
+AGENT_NAME=""
+AGENT_EMOJI=""
 
 # ============================================================================
 # Find openclaw binary (cross-platform)
@@ -252,6 +254,27 @@ detect_installations() {
         log "Mode: DOCKER -> ${CONTAINER_NAME}"
     fi
     echo ""
+
+    # --- Agent name ---
+    echo -e "${CYAN}------------------------------------------------------------${NC}"
+    echo ""
+    echo -e "  ${BOLD}Agent Configuration${NC}"
+    echo ""
+    echo -e "  The installer will create a dedicated content engine agent."
+    echo -e "  This agent will have browser control, content creation skills,"
+    echo -e "  and its own identity."
+    echo ""
+    printf "  %bAgent name%b [ContentEngine]: " "$BOLD" "$NC"
+    read -r agent_input
+    AGENT_NAME="${agent_input:-ContentEngine}"
+
+    printf "  %bAgent emoji%b [🎬]: " "$BOLD" "$NC"
+    read -r emoji_input
+    AGENT_EMOJI="${emoji_input:-🎬}"
+
+    echo ""
+    log "Agent: ${AGENT_EMOJI} ${AGENT_NAME}"
+    echo ""
 }
 
 # ============================================================================
@@ -324,52 +347,99 @@ install_skill() {
 }
 
 # ============================================================================
-# [2.5/7] Deploy agent identity (tells ClawBot it has browser + content tools)
+# [2.5/7] Create dedicated content engine agent
 # ============================================================================
-install_identity() {
-    log "=== [2.5/7] Installing Agent Identity ==="
+create_agent() {
+    log "=== [2.5/7] Creating Agent: ${AGENT_EMOJI} ${AGENT_NAME} ==="
 
     local identity_src="${SCRIPT_DIR}/IDENTITY.md"
-    if [ ! -f "$identity_src" ]; then
-        warn "  IDENTITY.md not found in project — skipping"
-        return
+    local identity_tmp=""
+
+    # Generate IDENTITY.md with the chosen agent name and emoji
+    if [ -f "$identity_src" ]; then
+        identity_tmp=$(mktemp)
+        sed "s/^- \*\*Name:\*\*.*/- **Name:** ${AGENT_NAME}/" "$identity_src" \
+            | sed "s/^- \*\*Emoji:\*\*.*/- **Emoji:** ${AGENT_EMOJI}/" > "$identity_tmp"
     fi
 
     if [ "$INSTALL_MODE" = "local" ]; then
-        # Find the workspace directory where IDENTITY.md lives
-        local ws="${OPENCLAW_HOME}/workspace"
+        local agent_ws="${OPENCLAW_HOME}/workspace"
+        mkdir -p "$agent_ws"
+
+        # --- Create or update agent via CLI ---
         if [ -n "$OC_BIN" ]; then
-            local cfg_ws
-            cfg_ws=$("$OC_BIN" config get agents.defaults.workspace 2>/dev/null || true)
-            if [ -n "$cfg_ws" ] && [ "$cfg_ws" != "undefined" ]; then
-                ws="$cfg_ws"
+            # Check if agent already exists
+            local agent_exists=false
+            local agents_out
+            agents_out=$("$OC_BIN" agents list 2>/dev/null || true)
+
+            # Check if there's already a "main" agent we should update,
+            # or if we need to create a new one
+            if echo "$agents_out" | grep -q "^- main"; then
+                log "  Updating existing 'main' agent identity..."
+                agent_exists=true
+            fi
+
+            # Deploy IDENTITY.md to workspace
+            if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
+                if [ -f "$agent_ws/IDENTITY.md" ]; then
+                    cp "$agent_ws/IDENTITY.md" "$agent_ws/IDENTITY.md.bak"
+                    log "  Backed up existing IDENTITY.md"
+                fi
+                cp "$identity_tmp" "$agent_ws/IDENTITY.md"
+                log "  IDENTITY.md deployed to $agent_ws/"
+            fi
+
+            # Set agent identity from the file
+            log "  Setting agent identity: ${AGENT_EMOJI} ${AGENT_NAME}..."
+            "$OC_BIN" agents set-identity \
+                --agent main \
+                --name "$AGENT_NAME" \
+                --emoji "$AGENT_EMOJI" \
+                --identity-file "$agent_ws/IDENTITY.md" \
+                2>/dev/null || {
+                    # Fallback: set name and emoji without file
+                    "$OC_BIN" agents set-identity \
+                        --agent main \
+                        --name "$AGENT_NAME" \
+                        --emoji "$AGENT_EMOJI" \
+                        2>/dev/null || warn "  Could not set identity via CLI"
+                }
+
+            log "  Agent identity set: ${AGENT_EMOJI} ${AGENT_NAME}"
+        else
+            # No CLI — just deploy IDENTITY.md
+            if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
+                cp "$identity_tmp" "$agent_ws/IDENTITY.md"
+                log "  IDENTITY.md deployed (no CLI for agent creation)"
             fi
         fi
-        mkdir -p "$ws"
-
-        if [ -f "$ws/IDENTITY.md" ]; then
-            # Backup existing identity
-            cp "$ws/IDENTITY.md" "$ws/IDENTITY.md.bak"
-            log "  Backed up existing IDENTITY.md"
-        fi
-
-        cp "$identity_src" "$ws/IDENTITY.md"
-        log "  IDENTITY.md deployed to $ws/"
     else
+        # Docker mode
         local docker_ws="/home/node/.openclaw/workspace"
         docker exec "$CONTAINER_NAME" bash -c "mkdir -p $docker_ws" 2>/dev/null || true
 
-        if docker exec "$CONTAINER_NAME" bash -c "test -f $docker_ws/IDENTITY.md" 2>/dev/null; then
-            docker exec "$CONTAINER_NAME" bash -c "cp $docker_ws/IDENTITY.md $docker_ws/IDENTITY.md.bak" 2>/dev/null || true
-            log "  Backed up existing IDENTITY.md"
+        if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
+            docker exec "$CONTAINER_NAME" bash -c "test -f $docker_ws/IDENTITY.md && cp $docker_ws/IDENTITY.md $docker_ws/IDENTITY.md.bak" 2>/dev/null || true
+            docker cp "$identity_tmp" "${CONTAINER_NAME}:$docker_ws/IDENTITY.md"
+            docker exec "$CONTAINER_NAME" bash -c "chown node:node $docker_ws/IDENTITY.md" 2>/dev/null || true
         fi
 
-        docker cp "$identity_src" "${CONTAINER_NAME}:$docker_ws/IDENTITY.md"
-        docker exec "$CONTAINER_NAME" bash -c "chown node:node $docker_ws/IDENTITY.md" 2>/dev/null || true
-        log "  IDENTITY.md deployed to container"
+        # Set identity via CLI inside container
+        docker exec -u node "$CONTAINER_NAME" openclaw agents set-identity \
+            --agent main \
+            --name "$AGENT_NAME" \
+            --emoji "$AGENT_EMOJI" \
+            --identity-file "$docker_ws/IDENTITY.md" \
+            2>/dev/null || warn "  Could not set identity in container"
+
+        log "  Agent deployed to container"
     fi
 
-    log "  Agent now knows it has browser + content creation capabilities"
+    # Clean up temp file
+    [ -n "$identity_tmp" ] && rm -f "$identity_tmp" 2>/dev/null || true
+
+    log "  Agent ${AGENT_EMOJI} ${AGENT_NAME} is ready"
 }
 
 # ============================================================================
@@ -816,7 +886,10 @@ print_summary() {
     mode_upper=$(echo "$INSTALL_MODE" | tr '[:lower:]' '[:upper:]')
     echo -e "  ${GREEN}Mode:${NC}  ${mode_upper} on ${OS_TYPE} (browser automation, no API keys)"
     echo ""
+    echo -e "  ${GREEN}Agent:${NC}  ${AGENT_EMOJI} ${AGENT_NAME}"
+    echo ""
     echo -e "  ${GREEN}Installed:${NC}"
+    echo "    - Agent: ${AGENT_EMOJI} ${AGENT_NAME} (with IDENTITY.md)"
     echo "    - 13 knowledge files (memory/content-engine/)"
     echo "    - content-engine skill (SKILL.md)"
     echo "    - credentials.json template"
@@ -884,7 +957,7 @@ main() {
     detect_installations
     install_knowledge
     install_skill
-    install_identity
+    create_agent
     configure_openclaw
     deploy_credentials
     reindex_memory

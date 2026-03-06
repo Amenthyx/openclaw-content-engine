@@ -18,6 +18,8 @@ $InstallMode = ""
 $OpenClawHome = ""
 $ContainerName = ""
 $OcBin = ""
+$AgentName = ""
+$AgentEmoji = ""
 
 # ============================================================================
 # Find openclaw binary
@@ -178,6 +180,24 @@ function Detect-Installations {
     if ($InstallMode -eq "local") { Log "Mode: LOCAL -> $OpenClawHome" }
     else { Log "Mode: DOCKER -> $ContainerName" }
     Write-Host ""
+
+    # --- Agent name ---
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Agent Configuration"
+    Write-Host ""
+    Write-Host "  The installer will create a dedicated content engine agent"
+    Write-Host "  with browser control and content creation capabilities."
+    Write-Host ""
+    $nameInput = Read-Host "  Agent name [ContentEngine]"
+    $script:AgentName = if ($nameInput) { $nameInput } else { "ContentEngine" }
+
+    $emojiInput = Read-Host "  Agent emoji [🎬]"
+    $script:AgentEmoji = if ($emojiInput) { $emojiInput } else { "🎬" }
+
+    Write-Host ""
+    Log "Agent: $AgentEmoji $AgentName"
+    Write-Host ""
 }
 
 # ============================================================================
@@ -227,16 +247,21 @@ function Install-Skill {
 }
 
 # ============================================================================
-# [2.5/7] Deploy agent identity (tells ClawBot it has browser + content tools)
+# [2.5/7] Create dedicated content engine agent
 # ============================================================================
-function Install-Identity {
-    Log "=== [2.5/7] Installing Agent Identity ==="
+function Create-Agent {
+    Log "=== [2.5/7] Creating Agent: $AgentEmoji $AgentName ==="
 
     $identitySrc = Join-Path $ScriptDir "IDENTITY.md"
     if (-not (Test-Path $identitySrc)) {
-        Warn "  IDENTITY.md not found in project — skipping"
+        Warn "  IDENTITY.md not found — skipping"
         return
     }
+
+    # Generate IDENTITY.md with chosen name and emoji
+    $identityContent = (Get-Content $identitySrc -Raw)
+    $identityContent = $identityContent -replace '(?m)^- \*\*Name:\*\*.*', "- **Name:** $AgentName"
+    $identityContent = $identityContent -replace '(?m)^- \*\*Emoji:\*\*.*', "- **Emoji:** $AgentEmoji"
 
     if ($InstallMode -eq "local") {
         $ws = Join-Path $OpenClawHome "workspace"
@@ -253,22 +278,39 @@ function Install-Identity {
             Copy-Item $dest -Destination "$dest.bak" -Force
             Log "  Backed up existing IDENTITY.md"
         }
-        Copy-Item $identitySrc -Destination $dest -Force
+        $identityContent | Set-Content -Path $dest -Encoding UTF8
         Log "  IDENTITY.md deployed to $ws/"
+
+        # Set agent identity via CLI
+        if ($OcBin) {
+            Log "  Setting agent identity: $AgentEmoji $AgentName..."
+            try {
+                & $OcBin agents set-identity --agent main --name $AgentName --emoji $AgentEmoji --identity-file $dest 2>$null
+            } catch {
+                try { & $OcBin agents set-identity --agent main --name $AgentName --emoji $AgentEmoji 2>$null } catch {}
+            }
+        }
     } else {
         $dockerWs = "/home/node/.openclaw/workspace"
         docker exec $ContainerName bash -c "mkdir -p $dockerWs" 2>$null
+
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        $identityContent | Set-Content -Path $tmpFile -Encoding UTF8
+
         $exists = docker exec $ContainerName bash -c "test -f $dockerWs/IDENTITY.md && echo yes" 2>$null
         if ($exists -eq "yes") {
             docker exec $ContainerName bash -c "cp $dockerWs/IDENTITY.md $dockerWs/IDENTITY.md.bak" 2>$null
-            Log "  Backed up existing IDENTITY.md"
         }
-        docker cp $identitySrc "${ContainerName}:$dockerWs/IDENTITY.md"
+        docker cp $tmpFile "${ContainerName}:$dockerWs/IDENTITY.md"
         docker exec $ContainerName bash -c "chown node:node $dockerWs/IDENTITY.md" 2>$null
-        Log "  IDENTITY.md deployed to container"
+        Remove-Item $tmpFile -Force
+
+        try {
+            docker exec -u node $ContainerName openclaw agents set-identity --agent main --name $AgentName --emoji $AgentEmoji --identity-file "$dockerWs/IDENTITY.md" 2>$null
+        } catch {}
     }
 
-    Log "  Agent now knows it has browser + content creation capabilities"
+    Log "  Agent $AgentEmoji $AgentName is ready"
 }
 
 # ============================================================================
@@ -648,7 +690,7 @@ function Main {
     Detect-Installations
     Install-Knowledge
     Install-Skill
-    Install-Identity
+    Create-Agent
     Configure-OpenClaw
     Deploy-Credentials
     Reindex-Memory
