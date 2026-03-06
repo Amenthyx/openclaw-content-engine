@@ -247,10 +247,10 @@ function Install-Skill {
 }
 
 # ============================================================================
-# [2.5/7] Create dedicated content engine agent
+# [2.5/7] Set up the default agent with browser + content identity
 # ============================================================================
 function Create-Agent {
-    Log "=== [2.5/7] Creating Agent: $AgentEmoji $AgentName ==="
+    Log "=== [2.5/7] Setting Up Agent: $AgentEmoji $AgentName ==="
 
     $identitySrc = Join-Path $ScriptDir "IDENTITY.md"
     if (-not (Test-Path $identitySrc)) {
@@ -264,6 +264,7 @@ function Create-Agent {
     $identityContent = $identityContent -replace '(?m)^- \*\*Emoji:\*\*.*', "- **Emoji:** $AgentEmoji"
 
     if ($InstallMode -eq "local") {
+        # Find main agent workspace
         $ws = Join-Path $OpenClawHome "workspace"
         if ($OcBin) {
             try {
@@ -281,14 +282,15 @@ function Create-Agent {
         $identityContent | Set-Content -Path $dest -Encoding UTF8
         Log "  IDENTITY.md deployed to $ws/"
 
-        # Set agent identity via CLI
+        # Set identity on the DEFAULT (main) agent — handles all messages
         if ($OcBin) {
-            Log "  Setting agent identity: $AgentEmoji $AgentName..."
+            Log "  Registering identity: $AgentEmoji $AgentName..."
             try {
                 & $OcBin agents set-identity --agent main --name $AgentName --emoji $AgentEmoji --identity-file $dest 2>$null
             } catch {
                 try { & $OcBin agents set-identity --agent main --name $AgentName --emoji $AgentEmoji 2>$null } catch {}
             }
+            Log "  $AgentEmoji $AgentName is the default agent (handles all messages)"
         }
     } else {
         $dockerWs = "/home/node/.openclaw/workspace"
@@ -308,9 +310,8 @@ function Create-Agent {
         try {
             docker exec -u node $ContainerName openclaw agents set-identity --agent main --name $AgentName --emoji $AgentEmoji --identity-file "$dockerWs/IDENTITY.md" 2>$null
         } catch {}
+        Log "  $AgentEmoji $AgentName is the default agent"
     }
-
-    Log "  Agent $AgentEmoji $AgentName is ready"
 }
 
 # ============================================================================

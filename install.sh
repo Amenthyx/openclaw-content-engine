@@ -347,10 +347,10 @@ install_skill() {
 }
 
 # ============================================================================
-# [2.5/7] Create dedicated content engine agent
+# [2.5/7] Set up the default agent with browser + content identity
 # ============================================================================
 create_agent() {
-    log "=== [2.5/7] Creating Agent: ${AGENT_EMOJI} ${AGENT_NAME} ==="
+    log "=== [2.5/7] Setting Up Agent: ${AGENT_EMOJI} ${AGENT_NAME} ==="
 
     local identity_src="${SCRIPT_DIR}/IDENTITY.md"
     local identity_tmp=""
@@ -360,86 +360,79 @@ create_agent() {
         identity_tmp=$(mktemp)
         sed "s/^- \*\*Name:\*\*.*/- **Name:** ${AGENT_NAME}/" "$identity_src" \
             | sed "s/^- \*\*Emoji:\*\*.*/- **Emoji:** ${AGENT_EMOJI}/" > "$identity_tmp"
+    else
+        warn "  IDENTITY.md template not found — skipping"
+        return
     fi
 
     if [ "$INSTALL_MODE" = "local" ]; then
+        # Find the main agent's workspace
         local agent_ws="${OPENCLAW_HOME}/workspace"
+        if [ -n "$OC_BIN" ]; then
+            local cfg_ws
+            cfg_ws=$("$OC_BIN" config get agents.defaults.workspace 2>/dev/null || true)
+            if [ -n "$cfg_ws" ] && [ "$cfg_ws" != "undefined" ]; then
+                agent_ws="$cfg_ws"
+            fi
+        fi
         mkdir -p "$agent_ws"
 
-        # --- Create or update agent via CLI ---
+        # Deploy IDENTITY.md to workspace
+        if [ -f "$agent_ws/IDENTITY.md" ]; then
+            cp "$agent_ws/IDENTITY.md" "$agent_ws/IDENTITY.md.bak"
+            log "  Backed up existing IDENTITY.md"
+        fi
+        cp "$identity_tmp" "$agent_ws/IDENTITY.md"
+        log "  IDENTITY.md deployed to $agent_ws/"
+
+        # Set agent identity on the DEFAULT (main) agent
+        # This is the agent that handles all Telegram/Discord messages
         if [ -n "$OC_BIN" ]; then
-            # Check if agent already exists
-            local agent_exists=false
-            local agents_out
-            agents_out=$("$OC_BIN" agents list 2>/dev/null || true)
-
-            # Check if there's already a "main" agent we should update,
-            # or if we need to create a new one
-            if echo "$agents_out" | grep -q "^- main"; then
-                log "  Updating existing 'main' agent identity..."
-                agent_exists=true
-            fi
-
-            # Deploy IDENTITY.md to workspace
-            if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
-                if [ -f "$agent_ws/IDENTITY.md" ]; then
-                    cp "$agent_ws/IDENTITY.md" "$agent_ws/IDENTITY.md.bak"
-                    log "  Backed up existing IDENTITY.md"
-                fi
-                cp "$identity_tmp" "$agent_ws/IDENTITY.md"
-                log "  IDENTITY.md deployed to $agent_ws/"
-            fi
-
-            # Set agent identity from the file
-            log "  Setting agent identity: ${AGENT_EMOJI} ${AGENT_NAME}..."
+            log "  Registering identity: ${AGENT_EMOJI} ${AGENT_NAME}..."
             "$OC_BIN" agents set-identity \
                 --agent main \
                 --name "$AGENT_NAME" \
                 --emoji "$AGENT_EMOJI" \
                 --identity-file "$agent_ws/IDENTITY.md" \
                 2>/dev/null || {
-                    # Fallback: set name and emoji without file
                     "$OC_BIN" agents set-identity \
                         --agent main \
                         --name "$AGENT_NAME" \
                         --emoji "$AGENT_EMOJI" \
                         2>/dev/null || warn "  Could not set identity via CLI"
                 }
-
-            log "  Agent identity set: ${AGENT_EMOJI} ${AGENT_NAME}"
-        else
-            # No CLI — just deploy IDENTITY.md
-            if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
-                cp "$identity_tmp" "$agent_ws/IDENTITY.md"
-                log "  IDENTITY.md deployed (no CLI for agent creation)"
-            fi
         fi
     else
         # Docker mode
         local docker_ws="/home/node/.openclaw/workspace"
         docker exec "$CONTAINER_NAME" bash -c "mkdir -p $docker_ws" 2>/dev/null || true
 
-        if [ -n "$identity_tmp" ] && [ -f "$identity_tmp" ]; then
-            docker exec "$CONTAINER_NAME" bash -c "test -f $docker_ws/IDENTITY.md && cp $docker_ws/IDENTITY.md $docker_ws/IDENTITY.md.bak" 2>/dev/null || true
-            docker cp "$identity_tmp" "${CONTAINER_NAME}:$docker_ws/IDENTITY.md"
-            docker exec "$CONTAINER_NAME" bash -c "chown node:node $docker_ws/IDENTITY.md" 2>/dev/null || true
-        fi
+        docker exec "$CONTAINER_NAME" bash -c "test -f $docker_ws/IDENTITY.md && cp $docker_ws/IDENTITY.md $docker_ws/IDENTITY.md.bak" 2>/dev/null || true
+        docker cp "$identity_tmp" "${CONTAINER_NAME}:$docker_ws/IDENTITY.md"
+        docker exec "$CONTAINER_NAME" bash -c "chown node:node $docker_ws/IDENTITY.md" 2>/dev/null || true
 
-        # Set identity via CLI inside container
         docker exec -u node "$CONTAINER_NAME" openclaw agents set-identity \
             --agent main \
             --name "$AGENT_NAME" \
             --emoji "$AGENT_EMOJI" \
             --identity-file "$docker_ws/IDENTITY.md" \
             2>/dev/null || warn "  Could not set identity in container"
-
-        log "  Agent deployed to container"
     fi
 
     # Clean up temp file
     [ -n "$identity_tmp" ] && rm -f "$identity_tmp" 2>/dev/null || true
 
-    log "  Agent ${AGENT_EMOJI} ${AGENT_NAME} is ready"
+    # Verify
+    if [ -n "$OC_BIN" ] && [ "$INSTALL_MODE" = "local" ]; then
+        local verify_out
+        verify_out=$("$OC_BIN" agents list 2>/dev/null || true)
+        if echo "$verify_out" | grep -q "$AGENT_NAME"; then
+            log "  Agent ${AGENT_EMOJI} ${AGENT_NAME} is the default agent"
+            log "  All Telegram/Discord messages will go to this agent"
+        else
+            warn "  Agent name not visible yet (will apply after gateway restart)"
+        fi
+    fi
 }
 
 # ============================================================================
