@@ -795,19 +795,82 @@ restart_gateway() {
 
     if $gw_up; then
         log "  OpenClaw gateway is running (new config loaded)"
-
-        # Verify browser service loaded
-        local browser_status
-        browser_status=$("$OC_BIN" browser status 2>&1 || true)
-        if echo "$browser_status" | grep -qi "enabled: true"; then
-            log "  Browser tool: ACTIVE"
-        else
-            warn "  Browser tool status unclear — test with: openclaw browser status"
-        fi
     else
         err "  Gateway did not start within 30 seconds"
         err "  Start manually:"
         err "    $OC_BIN gateway --force"
+    fi
+
+    # ---- STEP 4: Install and start node host ----
+    # The NODE HOST is what provides tools (browser, exec, camera, screen)
+    # to the agent. Without it, the agent has zero tools — only messaging.
+    log "  Installing node host service (provides browser + exec tools to agent)..."
+
+    # Stop existing node host if running
+    "$OC_BIN" node stop 2>/dev/null || true
+    sleep 1
+
+    # Install as system service (launchd on macOS, systemd on Linux, schtasks on Windows)
+    "$OC_BIN" node install 2>/dev/null || {
+        warn "  node install failed — trying to run directly"
+    }
+
+    # Start/restart the node host
+    "$OC_BIN" node restart 2>/dev/null || {
+        # Fallback: run in background
+        log "  Starting node host in background..."
+        case "$OS_TYPE" in
+            windows)
+                "$OC_BIN" node run >/dev/null 2>&1 &
+                disown "$!" 2>/dev/null || true
+                ;;
+            *)
+                nohup "$OC_BIN" node run >/dev/null 2>&1 &
+                disown 2>/dev/null || true
+                ;;
+        esac
+    }
+
+    # ---- STEP 5: Wait for node to pair with gateway ----
+    log "  Waiting for node host to connect..."
+    local node_attempts=0
+    local node_up=false
+    while [ "$node_attempts" -lt 10 ]; do
+        sleep 2
+        node_attempts=$((node_attempts + 1))
+        local nodes_out
+        nodes_out=$("$OC_BIN" nodes status 2>&1 || true)
+        if echo "$nodes_out" | grep -q "Connected: [1-9]"; then
+            node_up=true
+            break
+        fi
+    done
+
+    if $node_up; then
+        log "  Node host: CONNECTED (agent now has browser + exec tools)"
+    else
+        warn "  Node host not connected yet"
+        warn "  Check manually: openclaw nodes status"
+        warn "  If 0 connected, run: openclaw node install && openclaw node restart"
+    fi
+
+    # ---- STEP 6: Verify browser is accessible to agent ----
+    local browser_status
+    browser_status=$("$OC_BIN" browser status 2>&1 || true)
+    if echo "$browser_status" | grep -qi "enabled: true"; then
+        log "  Browser service: ACTIVE"
+    else
+        warn "  Browser service status unclear — test with: openclaw browser status"
+    fi
+
+    # Auto-approve any pending node pairing requests
+    local pending
+    pending=$("$OC_BIN" nodes pending 2>&1 || true)
+    if echo "$pending" | grep -qi "pending\|request"; then
+        log "  Auto-approving pending node pairing..."
+        # Try to approve all pending requests
+        "$OC_BIN" nodes approve --all 2>/dev/null || \
+        "$OC_BIN" nodes approve 2>/dev/null || true
     fi
 }
 
@@ -882,6 +945,16 @@ verify() {
                 fi
             else
                 warn "  Skill not visible yet (restart gateway)"
+            fi
+
+            # Node host (provides tools to agent)
+            local nodes_status
+            nodes_status=$("$OC_BIN" nodes status 2>&1 || true)
+            if echo "$nodes_status" | grep -q "Connected: [1-9]"; then
+                log "  Node host: CONNECTED (agent has tools)"
+            else
+                err "  Node host: NOT CONNECTED (agent has NO tools!)"
+                err "  Fix: openclaw node install && openclaw node restart"
             fi
         fi
 

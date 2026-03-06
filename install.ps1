@@ -608,15 +608,48 @@ function Restart-Gateway {
 
     if ($gwUp) {
         Log "  OpenClaw gateway is running (new config loaded)"
-        try {
-            $browserOut = & $OcBin browser status 2>$null | Out-String
-            if ($browserOut -match "enabled: true") { Log "  Browser tool: ACTIVE" }
-            else { Warn "  Browser status unclear — test: openclaw browser status" }
-        } catch {}
     } else {
         Err "  Gateway did not start within 30 seconds"
         Err "  Start manually: openclaw gateway --force"
     }
+
+    # Step 4: Install and start node host (provides tools to agent)
+    Log "  Installing node host service (provides browser + exec tools to agent)..."
+    try { & $OcBin node stop 2>$null } catch {}
+    Start-Sleep -Seconds 1
+
+    try { & $OcBin node install 2>$null } catch { Warn "  node install failed" }
+    try { & $OcBin node restart 2>$null } catch {
+        Log "  Starting node host in background..."
+        Start-Process -FilePath $OcBin -ArgumentList "node","run" -WindowStyle Hidden
+    }
+
+    # Step 5: Wait for node to pair
+    Log "  Waiting for node host to connect..."
+    $nodeUp = $false
+    for ($i = 0; $i -lt 10; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $nodesOut = & $OcBin nodes status 2>$null | Out-String
+            if ($nodesOut -match "Connected: [1-9]") { $nodeUp = $true; break }
+        } catch {}
+    }
+
+    if ($nodeUp) {
+        Log "  Node host: CONNECTED (agent now has browser + exec tools)"
+    } else {
+        Warn "  Node host not connected yet"
+        Warn "  Fix: openclaw node install; openclaw node restart"
+    }
+
+    # Auto-approve pending node pairings
+    try {
+        $pendingOut = & $OcBin nodes pending 2>$null | Out-String
+        if ($pendingOut -match "pending|request") {
+            Log "  Auto-approving pending node pairing..."
+            & $OcBin nodes approve --all 2>$null
+        }
+    } catch {}
 }
 
 # ============================================================================

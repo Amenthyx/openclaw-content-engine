@@ -42,10 +42,11 @@ browser press Enter
 
 ## Required OpenClaw Config
 
-The browser tool and exec tool must be enabled:
+The browser tool and exec tool require a node host connected to the gateway:
 ```bash
 openclaw config set tools.allow '["*"]'
-openclaw config set plugins.entries.lobster.enabled true
+openclaw config set agents.defaults.sandbox.mode off
+openclaw node install && openclaw node restart
 ```
 
 ## Credentials
