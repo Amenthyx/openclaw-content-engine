@@ -170,25 +170,25 @@ ESTIMATE COST:
   IF total > $20.00 → require explicit approval
 ```
 
-### Provider Fallback Chains
+### Provider Fallback Chains (All Browser-Based)
 ```
 IMAGE GENERATION:
-  Primary: DALL-E 3 (API) → Fallback: gpt-image-1 (API) → Fallback: Higgsfield Soul (avatars) → Fallback: ChatGPT browser (free) → Fallback: Stability SD3 → Fallback: Midjourney (Discord bot)
+  Primary: ChatGPT browser (DALL-E) → Fallback: Higgsfield Soul → Fallback: Midjourney (Discord) → Fallback: Stability AI playground → Fallback: Canva templates
 
 VIDEO GENERATION:
-  Primary: Higgsfield (free) → Fallback: Runway Gen-3 → Fallback: Kling AI → Fallback: Pika
+  Primary: Higgsfield (Soul→DoP→Speak) → Fallback: Runway ML → Fallback: Kling AI → Fallback: Pika Labs
 
 VOICEOVER:
-  Primary: ElevenLabs → Fallback: OpenAI TTS → Fallback: Google Cloud TTS
+  Primary: ElevenLabs browser → Fallback: built-in browser TTS
 
 MUSIC:
-  Primary: Suno AI → Fallback: royalty-free library
+  Primary: Suno AI browser → Fallback: royalty-free library download
 
 SCRIPT WRITING:
-  Primary: GPT-4o → Fallback: DeepSeek → Fallback: Claude
+  Primary: ChatGPT browser → Fallback: local LLM if available
 
 IMAGE ANALYSIS:
-  Primary: Gemini Flash (free) → Fallback: GPT-4o Vision
+  Primary: ChatGPT browser (upload image + ask) → Fallback: manual description
 ```
 
 ### Monitoring & Alerting

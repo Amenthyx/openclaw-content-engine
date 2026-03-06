@@ -1,0 +1,6 @@
+credentials.json
+*-session.json
+sessions/
+workspace/
+*.log
+node_modules/
