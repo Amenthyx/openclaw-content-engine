@@ -610,8 +610,6 @@ cfg.plugins.entries.lobster = { enabled: true };
 cfg.plugins.entries['llm-task'] = { enabled: true };
 cfg.plugins.entries['open-prose'] = { enabled: true };
 cfg.plugins.entries['voice-call'] = { enabled: true };
-if (!cfg.browser) cfg.browser = {};
-cfg.browser.defaultProfile = 'openclaw';
 if (!cfg.tools) cfg.tools = {};
 cfg.tools.allow = ['*'];
 if (!cfg.tools.elevated) cfg.tools.elevated = {};
@@ -984,6 +982,16 @@ function Verify-Install {
 
         if ($OcBin) {
             try {
+                $browserEngine = & $OcBin config get browser.engine 2>$null
+                if ($browserEngine -eq "playwright") {
+                    Log "  Browser engine: PLAYWRIGHT"
+                } else {
+                    Warn "  Browser engine: $browserEngine (expected: playwright)"
+                    Warn "  Fix: openclaw config set browser.engine playwright"
+                }
+            } catch {}
+
+            try {
                 $skillOut = & $OcBin skills list 2>$null | Out-String
                 if ($skillOut -match "content-engine") {
                     if ($skillOut -match "ready.*content-engine|content-engine.*ready") {
@@ -1021,6 +1029,9 @@ function Print-Summary {
     Write-Host "    - 16 knowledge files (content + autonomous ops + system control)"
     Write-Host "    - content-engine skill"
     Write-Host "    - credentials.json template (30+ platform slots)"
+    Write-Host ""
+    Write-Host "  Browser: Playwright CLI (chromium, headless)" -ForegroundColor Green
+    Write-Host "  Permissions: ALL GRANTED (unrestricted)" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Capabilities:" -ForegroundColor Green
     Write-Host "    - Browse any website, log in, interact"

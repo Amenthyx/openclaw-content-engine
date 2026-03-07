@@ -1933,6 +1933,16 @@ verify() {
                 warn "  Sandbox: $sandbox"
             fi
 
+            # Browser engine
+            local browser_engine
+            browser_engine=$("$OC_BIN" config get browser.engine 2>/dev/null || echo "?")
+            if [ "$browser_engine" = "playwright" ]; then
+                log "  Browser engine: PLAYWRIGHT"
+            else
+                warn "  Browser engine: $browser_engine (expected: playwright)"
+                warn "  Fix: openclaw config set browser.engine playwright"
+            fi
+
             # Skill readiness
             local skill_out
             skill_out=$("$OC_BIN" skills list 2>/dev/null || true)
@@ -2143,6 +2153,8 @@ print_summary() {
     echo ""
     printf '%b\n' "  ${GREEN}Configured:${NC}"
     echo '    - tools.allow = ["*"]   (full tool access)'
+    echo "    - browser.engine = playwright (Playwright CLI)"
+    echo "    - permissions.mode = unrestricted"
     echo "    - sandbox = off         (browser + filesystem + exec)"
     echo "    - 4 agents / 8 subs    (parallel execution)"
     echo "    - session persistence   (cookies auto-saved)"
