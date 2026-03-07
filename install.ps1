@@ -244,11 +244,15 @@ function Detect-Installations {
     Write-Host ""
     Write-Host "  1) Playwright - headless Chromium (recommended, no GUI needed)" -ForegroundColor White
     Write-Host "  2) Chrome - uses your installed Google Chrome browser" -ForegroundColor White
+    Write-Host "  3) Chrome Canary - uses the latest Chrome Canary (bleeding-edge)" -ForegroundColor White
     Write-Host ""
-    $browserInput = Read-Host "  Browser engine [1/2] [1]"
+    $browserInput = Read-Host "  Browser engine [1/2/3] [1]"
     if ($browserInput -eq "2") {
         $script:BrowserEngine = "chrome"
         Log "  Browser: Google Chrome"
+    } elseif ($browserInput -eq "3") {
+        $script:BrowserEngine = "chrome-canary"
+        Log "  Browser: Chrome Canary"
     } else {
         $script:BrowserEngine = "playwright"
         Log "  Browser: Playwright (headless Chromium)"
@@ -560,13 +564,24 @@ function Configure-OpenClaw {
 
     # Browser engine
     Log "  Configuring browser engine: $BrowserEngine..."
-    Oc-Config -Args @("set", "browser.engine", $BrowserEngine)
-    Oc-Config -Args @("set", "browser.driver", $BrowserEngine)
-    if ($BrowserEngine -eq "chrome") {
+    if ($BrowserEngine -eq "chrome-canary") {
+        Oc-Config -Args @("set", "browser.engine", "chrome")
+        Oc-Config -Args @("set", "browser.driver", "chrome")
+        Oc-Config -Args @("set", "browser.type", "chrome")
+        Oc-Config -Args @("set", "browser.headless", "false")
+        $canaryPath = "$env:LOCALAPPDATA\Google\Chrome SxS\Application\chrome.exe"
+        Oc-Config -Args @("set", "browser.executablePath", $canaryPath)
+        Oc-Config -Args @("set", "browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]')
+        Log "  Chrome Canary path: $canaryPath"
+    } elseif ($BrowserEngine -eq "chrome") {
+        Oc-Config -Args @("set", "browser.engine", $BrowserEngine)
+        Oc-Config -Args @("set", "browser.driver", $BrowserEngine)
         Oc-Config -Args @("set", "browser.type", "chrome")
         Oc-Config -Args @("set", "browser.headless", "false")
         Oc-Config -Args @("set", "browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]')
     } else {
+        Oc-Config -Args @("set", "browser.engine", $BrowserEngine)
+        Oc-Config -Args @("set", "browser.driver", $BrowserEngine)
         Oc-Config -Args @("set", "browser.type", "chromium")
         Oc-Config -Args @("set", "browser.headless", "true")
         Oc-Config -Args @("set", "browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]')
@@ -602,9 +617,14 @@ function Configure-OpenClaw {
     Oc-Cmd -Args @("plugins", "install", "lobster")
 
     # Install browser engine
-    if ($BrowserEngine -eq "chrome") {
-        Log "  Chrome selected - skipping Playwright install"
-        Log "  Make sure Google Chrome is installed on this machine"
+    if ($BrowserEngine -eq "chrome" -or $BrowserEngine -eq "chrome-canary") {
+        if ($BrowserEngine -eq "chrome-canary") {
+            Log "  Chrome Canary selected - skipping Playwright install"
+            Log "  Make sure Google Chrome Canary is installed on this machine"
+        } else {
+            Log "  Chrome selected - skipping Playwright install"
+            Log "  Make sure Google Chrome is installed on this machine"
+        }
         Oc-Cmd -Args @("browser", "setup")
         Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "chrome", "--color", "#FF4500")
     } else {
@@ -641,7 +661,7 @@ function Configure-OpenClaw {
     if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
     if ($py) {
         $stealthPkgs = "cloudscraper selenium-stealth nodriver"
-        if ($BrowserEngine -eq "chrome") { $stealthPkgs += " undetected-chromedriver" }
+        if ($BrowserEngine -eq "chrome" -or $BrowserEngine -eq "chrome-canary") { $stealthPkgs += " undetected-chromedriver" }
         try { & $py.Source -m pip install --user $stealthPkgs.Split(" ") 2>$null } catch {}
         Log "  Python stealth packages: available"
     }
@@ -745,12 +765,15 @@ cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
 var bEngine = '$BrowserEngine' || 'playwright';
-cfg.browser.engine = bEngine;
-cfg.browser.driver = bEngine;
-cfg.browser.type = bEngine === 'chrome' ? 'chrome' : 'chromium';
-cfg.browser.headless = bEngine !== 'chrome';
+cfg.browser.engine = (bEngine === 'chrome-canary') ? 'chrome' : bEngine;
+cfg.browser.driver = (bEngine === 'chrome-canary') ? 'chrome' : bEngine;
+cfg.browser.type = (bEngine === 'chrome' || bEngine === 'chrome-canary') ? 'chrome' : 'chromium';
+cfg.browser.headless = (bEngine !== 'chrome' && bEngine !== 'chrome-canary');
 cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
-if (bEngine === 'chrome') cfg.browser.launchArgs.push('--start-maximized');
+if (bEngine === 'chrome' || bEngine === 'chrome-canary') cfg.browser.launchArgs.push('--start-maximized');
+if (bEngine === 'chrome-canary') {
+  cfg.browser.executablePath = (process.env.LOCALAPPDATA || '') + '/Google/Chrome SxS/Application/chrome.exe';
+}
 cfg.browser.navigationTimeout = 60000;
 cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
@@ -817,15 +840,19 @@ cfg["commands"]["nativeSkills"] = "auto"
 cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
 b_engine = "$BrowserEngine" or "playwright"
+# Chrome Canary support handled below
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
-cfg["browser"]["engine"] = b_engine
-cfg["browser"]["driver"] = b_engine
-cfg["browser"]["type"] = "chrome" if b_engine == "chrome" else "chromium"
-cfg["browser"]["headless"] = b_engine != "chrome"
+cfg["browser"]["engine"] = "chrome" if b_engine == "chrome-canary" else b_engine
+cfg["browser"]["driver"] = "chrome" if b_engine == "chrome-canary" else b_engine
+cfg["browser"]["type"] = "chrome" if b_engine in ("chrome", "chrome-canary") else "chromium"
+cfg["browser"]["headless"] = b_engine not in ("chrome", "chrome-canary")
 launch_args = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
-if b_engine == "chrome":
+if b_engine in ("chrome", "chrome-canary"):
     launch_args.append("--start-maximized")
+if b_engine == "chrome-canary":
+    import os as _os
+    cfg["browser"]["executablePath"] = _os.environ.get("LOCALAPPDATA", "") + r"\Google\Chrome SxS\Application\chrome.exe"
 cfg["browser"]["launchArgs"] = launch_args
 cfg["browser"]["navigationTimeout"] = 60000
 cfg["browser"]["actionTimeout"] = 30000
@@ -1156,7 +1183,8 @@ function Print-Summary {
     Write-Host "    - content-engine skill"
     Write-Host "    - credentials.json template (30+ platform slots)"
     Write-Host ""
-    Write-Host "  Browser: $BrowserEngine$(if ($BrowserEngine -eq 'chrome') { ' (Google Chrome)' } else { ' (headless Chromium)' })" -ForegroundColor Green
+    $browserLabel = switch ($BrowserEngine) { "chrome" { " (Google Chrome)" }; "chrome-canary" { " (Chrome Canary)" }; default { " (headless Chromium)" } }
+    Write-Host "  Browser: $BrowserEngine$browserLabel" -ForegroundColor Green
     Write-Host "  Permissions: ALL GRANTED (unrestricted)" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Capabilities:" -ForegroundColor Green

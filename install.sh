@@ -527,11 +527,13 @@ detect_installations() {
     echo ""
     printf '%b\n' "  ${BOLD}1)${NC} Playwright — headless Chromium (recommended, no GUI needed)"
     printf '%b\n' "  ${BOLD}2)${NC} Chrome — uses your installed Google Chrome browser"
+    printf '%b\n' "  ${BOLD}3)${NC} Chrome Canary — uses the latest Chrome Canary (bleeding-edge)"
     echo ""
-    printf "  %bBrowser engine [1/2]%b [1]: " "$BOLD" "$NC"
+    printf "  %bBrowser engine [1/2/3]%b [1]: " "$BOLD" "$NC"
     read -r browser_input
     case "${browser_input:-1}" in
         2) BROWSER_ENGINE="chrome" ; log "  Browser: Google Chrome" ;;
+        3) BROWSER_ENGINE="chrome-canary" ; log "  Browser: Chrome Canary" ;;
         *) BROWSER_ENGINE="playwright" ; log "  Browser: Playwright (headless Chromium)" ;;
     esac
     echo ""
@@ -843,9 +845,14 @@ configure_via_cli() {
     oc_cmd plugins install lobster 2>/dev/null || true
 
     # Install browser engine
-    if [ "$BROWSER_ENGINE" = "chrome" ]; then
-        log "  [Browser] Chrome selected — skipping Playwright install"
-        log "  [Browser] Make sure Google Chrome is installed on this machine"
+    if [ "$BROWSER_ENGINE" = "chrome" ] || [ "$BROWSER_ENGINE" = "chrome-canary" ]; then
+        if [ "$BROWSER_ENGINE" = "chrome-canary" ]; then
+            log "  [Browser] Chrome Canary selected — skipping Playwright install"
+            log "  [Browser] Make sure Google Chrome Canary is installed on this machine"
+        else
+            log "  [Browser] Chrome selected — skipping Playwright install"
+            log "  [Browser] Make sure Google Chrome is installed on this machine"
+        fi
         oc_cmd browser setup 2>/dev/null || true
     else
         log "  [Browser] Installing Playwright CLI and Chromium browser..."
@@ -926,6 +933,22 @@ configure_via_cli() {
         oc_config set browser.headless false
         oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]'
         oc_cmd browser create-profile --name openclaw --driver chrome --color "#FF4500" 2>/dev/null || true
+    elif [ "$BROWSER_ENGINE" = "chrome-canary" ]; then
+        oc_config set browser.engine chrome
+        oc_config set browser.driver chrome
+        oc_config set browser.type chrome
+        oc_config set browser.headless false
+        # Detect Chrome Canary executable path per OS
+        local canary_path=""
+        case "$(uname -s)" in
+            Darwin*)  canary_path="/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary" ;;
+            MINGW*|MSYS*|CYGWIN*) canary_path="$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r')/Google/Chrome SxS/Application/chrome.exe" ;;
+            *)        canary_path="$(command -v google-chrome-canary 2>/dev/null || command -v chrome-canary 2>/dev/null || echo "google-chrome-canary")" ;;
+        esac
+        oc_config set browser.executablePath "$canary_path"
+        oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]'
+        oc_cmd browser create-profile --name openclaw --driver chrome --color "#FF4500" 2>/dev/null || true
+        log "  [Browser] Chrome Canary path: ${canary_path}"
     else
         oc_config set browser.engine playwright
         oc_config set browser.driver playwright
@@ -1096,12 +1119,18 @@ cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
 var bEngine = process.argv[6] || 'playwright';
-cfg.browser.engine = bEngine;
-cfg.browser.driver = bEngine;
-cfg.browser.type = bEngine === 'chrome' ? 'chrome' : 'chromium';
-cfg.browser.headless = bEngine !== 'chrome';
+cfg.browser.engine = (bEngine === 'chrome-canary') ? 'chrome' : bEngine;
+cfg.browser.driver = (bEngine === 'chrome-canary') ? 'chrome' : bEngine;
+cfg.browser.type = (bEngine === 'chrome' || bEngine === 'chrome-canary') ? 'chrome' : 'chromium';
+cfg.browser.headless = (bEngine !== 'chrome' && bEngine !== 'chrome-canary');
 cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
-if (bEngine === 'chrome') cfg.browser.launchArgs.push('--start-maximized');
+if (bEngine === 'chrome' || bEngine === 'chrome-canary') cfg.browser.launchArgs.push('--start-maximized');
+if (bEngine === 'chrome-canary') {
+  var os = require('os');
+  if (os.platform() === 'darwin') cfg.browser.executablePath = '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary';
+  else if (os.platform() === 'win32') cfg.browser.executablePath = process.env.LOCALAPPDATA + '/Google/Chrome SxS/Application/chrome.exe';
+  else cfg.browser.executablePath = 'google-chrome-canary';
+}
 cfg.browser.navigationTimeout = 60000;
 cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
@@ -1177,13 +1206,21 @@ cfg["messages"]["ackReactionScope"] = "group-mentions"
 b_engine = sys.argv[6] if len(sys.argv) > 6 else "playwright"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
-cfg["browser"]["engine"] = b_engine
-cfg["browser"]["driver"] = b_engine
-cfg["browser"]["type"] = "chrome" if b_engine == "chrome" else "chromium"
-cfg["browser"]["headless"] = b_engine != "chrome"
+cfg["browser"]["engine"] = "chrome" if b_engine == "chrome-canary" else b_engine
+cfg["browser"]["driver"] = "chrome" if b_engine == "chrome-canary" else b_engine
+cfg["browser"]["type"] = "chrome" if b_engine in ("chrome", "chrome-canary") else "chromium"
+cfg["browser"]["headless"] = b_engine not in ("chrome", "chrome-canary")
 launch_args = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
-if b_engine == "chrome":
+if b_engine in ("chrome", "chrome-canary"):
     launch_args.append("--start-maximized")
+if b_engine == "chrome-canary":
+    import platform
+    if platform.system() == "Darwin":
+        cfg["browser"]["executablePath"] = "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
+    elif platform.system() == "Windows":
+        cfg["browser"]["executablePath"] = os.environ.get("LOCALAPPDATA", "") + "/Google/Chrome SxS/Application/chrome.exe"
+    else:
+        cfg["browser"]["executablePath"] = "google-chrome-canary"
 cfg["browser"]["launchArgs"] = launch_args
 cfg["browser"]["navigationTimeout"] = 60000
 cfg["browser"]["actionTimeout"] = 30000
@@ -1619,7 +1656,7 @@ fi'
     # 10b. Python stealth & Cloudflare bypass libraries (all local, no API keys)
     log "  [Stealth] Installing Python bypass libraries..."
     local stealth_packages="cloudscraper selenium-stealth nodriver"
-    if [ "$BROWSER_ENGINE" = "chrome" ]; then
+    if [ "$BROWSER_ENGINE" = "chrome" ] || [ "$BROWSER_ENGINE" = "chrome-canary" ]; then
         stealth_packages="$stealth_packages undetected-chromedriver"
     fi
 
