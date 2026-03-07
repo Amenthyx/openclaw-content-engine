@@ -918,24 +918,44 @@ function Restart-Gateway {
         return
     }
 
-    # Step 1: Stop all nodes first, then kill gateway
+    # Step 1: Stop all nodes, nuke stale state, then kill gateway
     Log "  Stopping all OpenClaw nodes and gateway..."
 
-    # Stop all node hosts first (they depend on gateway)
     try { & $OcBin node stop --all 2>$null } catch {}
     try { & $OcBin node stop 2>$null } catch {}
 
-    # Stop individual nodes
     try {
         $allNodes = & $OcBin nodes list 2>$null | Out-String
         $nodeIds = [regex]::Matches($allNodes, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
         foreach ($nid in $nodeIds) {
-            Log "  Stopping node: $nid"
             try { & $OcBin node stop $nid 2>$null } catch {}
         }
     } catch {}
 
-    # Kill any lingering node host processes
+    # Uninstall stale node pairings (fixes 1006/no close frame)
+    Log "  Removing stale node pairings..."
+    try { & $OcBin node uninstall --all 2>$null } catch {}
+    try { & $OcBin node uninstall 2>$null } catch {}
+    try { & $OcBin devices remove --all 2>$null } catch {}
+    try { & $OcBin devices revoke --all 2>$null } catch {}
+
+    # Remove stale state files
+    $staleFiles = @("nodes.json","devices.json","node-host.json","gateway.pid","gateway.lock",".gateway-port")
+    foreach ($f in $staleFiles) {
+        $fp = Join-Path $OpenClawHome $f
+        if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue; Log "  Removed: $f" }
+    }
+    $staleDirs = @("nodes","devices","node-host")
+    foreach ($d in $staleDirs) {
+        $dp = Join-Path $OpenClawHome $d
+        if (Test-Path $dp) { Remove-Item $dp -Recurse -Force -ErrorAction SilentlyContinue; Log "  Removed: $d/" }
+    }
+
+    # Clear stale gateway tokens
+    try { & $OcBin config delete gateway.token 2>$null } catch {}
+    try { & $OcBin config delete gateway.secret 2>$null } catch {}
+
+    # Kill lingering processes
     try {
         Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%node%run%'" -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -943,7 +963,6 @@ function Restart-Gateway {
 
     Start-Sleep -Seconds 1
 
-    # Now stop the gateway
     try { & $OcBin gateway stop 2>$null } catch {}
     Start-Sleep -Seconds 1
 
@@ -1364,22 +1383,161 @@ function Standalone-Restart {
 }
 
 # ============================================================================
-# Entry point — supports: install (default), --restart, --help
+# Full reset: powershell -File install.ps1 --reset
+# ============================================================================
+function Standalone-Reset {
+    Log "=== OpenClaw FULL RESET (clean slate) ==="
+
+    if (-not (Find-OpenClaw)) {
+        Err "openclaw CLI not found"; exit 1
+    }
+    Log "  CLI: $OcBin"
+
+    $candidates = @(
+        (Join-Path $env:USERPROFILE ".openclaw"),
+        (Join-Path $env:APPDATA "openclaw")
+    )
+    $script:OpenClawHome = ""
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { $script:OpenClawHome = $c; break }
+    }
+    if (-not $OpenClawHome) { $script:OpenClawHome = Join-Path $env:USERPROFILE ".openclaw" }
+    $script:InstallMode = "local"
+    Log "  Home: $OpenClawHome"
+
+    # Step 1: Kill everything
+    Log "  [1/8] Killing ALL OpenClaw processes..."
+    try { & $OcBin node stop --all 2>$null } catch {}
+    try { & $OcBin gateway stop 2>$null } catch {}
+    Start-Sleep -Seconds 1
+    try {
+        Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+    $gwPort = 18789
+    $portProcs = netstat -ano 2>$null | Select-String ":$gwPort\s.*LISTEN"
+    foreach ($line in $portProcs) {
+        if ($line -match '\s(\d+)\s*$') {
+            $pid = $Matches[1]
+            if ($pid -and $pid -ne "0") { try { Stop-Process -Id $pid -Force } catch {} }
+        }
+    }
+    Start-Sleep -Seconds 2
+    Log "  All processes killed"
+
+    # Step 2: Nuke all state
+    Log "  [2/8] Removing all node pairings and stale state..."
+    try { & $OcBin node uninstall --all 2>$null } catch {}
+    try { & $OcBin devices remove --all 2>$null } catch {}
+    try { & $OcBin devices revoke --all 2>$null } catch {}
+    $staleFiles = @("nodes.json","devices.json","node-host.json","gateway.pid","gateway.lock",".gateway-port")
+    foreach ($f in $staleFiles) {
+        $fp = Join-Path $OpenClawHome $f
+        if (Test-Path $fp) { Remove-Item $fp -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($d in @("nodes","devices","node-host")) {
+        $dp = Join-Path $OpenClawHome $d
+        if (Test-Path $dp) { Remove-Item $dp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    try { & $OcBin config delete gateway.token 2>$null } catch {}
+    try { & $OcBin config delete gateway.secret 2>$null } catch {}
+    Log "  Stale state removed"
+
+    # Step 3: Reset gateway config
+    Log "  [3/8] Resetting gateway config..."
+    try { & $OcBin config set gateway.port 18789 2>$null } catch {}
+    try { & $OcBin config set gateway.host "127.0.0.1" 2>$null } catch {}
+
+    # Step 4: Start gateway
+    Log "  [4/8] Starting gateway..."
+    Start-Process -FilePath $OcBin -ArgumentList "gateway","--force" -WindowStyle Hidden
+
+    # Step 5: Wait for gateway
+    Log "  [5/8] Waiting for gateway..."
+    $gwUp = $false
+    for ($i = 0; $i -lt 25; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $s = & $OcBin gateway status 2>$null | Out-String
+            if ($s -match "ok|running|online|healthy") { $gwUp = $true; break }
+        } catch {}
+        if ($i % 5 -eq 4) { Log "  Waiting... ($($i+1)/25)" }
+    }
+    if ($gwUp) { Log "  Gateway: ONLINE" }
+    else { Err "  Gateway failed. Run: openclaw gateway --force"; return }
+
+    # Step 6: Fresh node install
+    Log "  [6/8] Installing fresh node host..."
+    $gwHost = "127.0.0.1"
+    try { & $OcBin node install --host $gwHost --port $gwPort --force 2>$null } catch {}
+    Start-Sleep -Seconds 3
+    Log "  Starting node host..."
+    Start-Process -FilePath $OcBin -ArgumentList "node","run","--host",$gwHost,"--port",$gwPort -WindowStyle Hidden
+
+    # Step 7: Approve pairings
+    Log "  [7/8] Approving device pairings..."
+    Start-Sleep -Seconds 8
+    for ($r = 0; $r -lt 3; $r++) {
+        try { & $OcBin devices approve --all 2>$null } catch {}
+        try { & $OcBin nodes approve --all 2>$null } catch {}
+        try {
+            $devOut = & $OcBin devices list 2>$null | Out-String
+            $ids = [regex]::Matches($devOut, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+            foreach ($rid in $ids) { try { & $OcBin devices approve $rid 2>$null } catch {} }
+        } catch {}
+        Start-Sleep -Seconds 3
+    }
+
+    # Step 8: Wait for nodes
+    Log "  [8/8] Waiting for node hosts..."
+    $nodeUp = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Seconds 3
+        try {
+            $n = & $OcBin nodes status 2>$null | Out-String
+            if ($n -match "Connected: [1-9]|online|active") { $nodeUp = $true; break }
+        } catch {}
+        try { & $OcBin devices approve --all 2>$null } catch {}
+        if ($i % 5 -eq 4) { try { & $OcBin node restart --all 2>$null } catch {} }
+    }
+
+    if ($nodeUp) { Log "  Nodes: CONNECTED" }
+    else {
+        Warn "  Node not connected. Run in foreground to debug:"
+        Warn "    openclaw node run --host 127.0.0.1 --port 18789"
+    }
+
+    try { & $OcBin plugins activate lobster 2>$null } catch {}
+
+    Write-Host ""
+    Log "=== OpenClaw FULL RESET Complete ==="
+    Log "  Gateway: $(if ($gwUp) { 'ONLINE' } else { 'OFFLINE' })"
+    Log "  Nodes:   $(if ($nodeUp) { 'CONNECTED' } else { 'NOT CONNECTED' })"
+    Log "  Port:    $gwPort"
+    if ($gwUp -and $nodeUp) { Log "  Dashboard: http://localhost:$gwPort" }
+    Write-Host ""
+}
+
+# ============================================================================
+# Entry point — supports: install, --restart, --reset, --help
 # ============================================================================
 $cmd = if ($args.Count -gt 0) { $args[0] } else { "" }
 switch -Regex ($cmd) {
+    '^(--reset|reset)$' { Standalone-Reset }
     '^(--restart|-r|restart)$' { Standalone-Restart }
     '^(--help|-h|help)$' {
         Write-Host "Usage: powershell -File install.ps1 [command]"
         Write-Host ""
         Write-Host "Commands:"
         Write-Host "  (no args)    Full installation wizard"
-        Write-Host "  --restart    Restart OpenClaw gateway + all nodes (no reinstall)"
+        Write-Host "  --restart    Restart OpenClaw gateway + all nodes"
+        Write-Host "  --reset      FULL RESET - nuke all state, rebuild from scratch"
         Write-Host "  --help       Show this help"
         Write-Host ""
         Write-Host "Examples:"
         Write-Host "  powershell -File install.ps1              # Full install"
-        Write-Host "  powershell -File install.ps1 --restart    # Just restart everything"
+        Write-Host "  powershell -File install.ps1 --restart    # Restart"
+        Write-Host "  powershell -File install.ps1 --reset      # Nuclear fix for 1006 errors"
     }
     default { Main }
 }

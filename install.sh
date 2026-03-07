@@ -1934,7 +1934,7 @@ restart_gateway() {
         return
     fi
 
-    # ---- STEP 1: Stop all nodes, then kill gateway ----
+    # ---- STEP 1: Stop all nodes, nuke stale state, then kill gateway ----
     log "  Stopping all OpenClaw nodes and gateway..."
 
     # Stop all connected nodes first (they depend on gateway)
@@ -1952,6 +1952,25 @@ restart_gateway() {
             "$OC_BIN" node stop "$nid" 2>/dev/null || true
         done
     fi
+
+    # Uninstall all old node pairings (fixes 1006/no close frame errors)
+    log "  Removing stale node pairings..."
+    "$OC_BIN" node uninstall --all 2>/dev/null || true
+    "$OC_BIN" node uninstall 2>/dev/null || true
+    "$OC_BIN" devices remove --all 2>/dev/null || true
+    "$OC_BIN" devices revoke --all 2>/dev/null || true
+
+    # Remove stale state files
+    for f in nodes.json devices.json node-host.json gateway.pid gateway.lock .gateway-port; do
+        rm -f "${OPENCLAW_HOME}/$f" 2>/dev/null || true
+    done
+    for d in nodes devices node-host; do
+        rm -rf "${OPENCLAW_HOME}/$d" 2>/dev/null || true
+    done
+
+    # Clear stale gateway tokens
+    "$OC_BIN" config delete gateway.token 2>/dev/null || true
+    "$OC_BIN" config delete gateway.secret 2>/dev/null || true
 
     # Kill any lingering node host processes
     case "$OS_TYPE" in
@@ -2764,9 +2783,277 @@ standalone_restart() {
 }
 
 # ============================================================================
-# Entry point — supports: install (default), --restart, --help
+# Full reset: bash install.sh --reset
+# Nukes all state (nodes, devices, pairings, sessions, gateway DB) and rebuilds
+# ============================================================================
+standalone_reset() {
+    log "=== OpenClaw FULL RESET (clean slate) ==="
+    detect_os
+
+    # Find the binary
+    if ! find_openclaw_bin; then
+        err "openclaw CLI not found in PATH"
+        err "Install it first: npm install -g @anthropic/openclaw"
+        exit 1
+    fi
+    log "  CLI: $OC_BIN"
+
+    # Find home
+    local candidates=""
+    case "$OS_TYPE" in
+        windows) candidates="$USERPROFILE/.openclaw $APPDATA/openclaw $HOME/.openclaw" ;;
+        macos) candidates="$HOME/.openclaw $HOME/Library/Application Support/openclaw" ;;
+        *) candidates="$HOME/.openclaw" ;;
+    esac
+    OPENCLAW_HOME=""
+    for c in $candidates; do
+        if [ -d "$c" ]; then
+            OPENCLAW_HOME="$c"
+            break
+        fi
+    done
+    if [ -z "$OPENCLAW_HOME" ]; then
+        OPENCLAW_HOME="$HOME/.openclaw"
+    fi
+    INSTALL_MODE="local"
+    log "  Home: $OPENCLAW_HOME"
+
+    # ---- STEP 1: KILL EVERYTHING ----
+    log "  [1/8] Killing ALL OpenClaw processes..."
+    "$OC_BIN" node stop --all 2>/dev/null || true
+    "$OC_BIN" node stop 2>/dev/null || true
+    "$OC_BIN" gateway stop 2>/dev/null || true
+    sleep 1
+
+    # Force kill all openclaw processes
+    case "$OS_TYPE" in
+        windows)
+            wmic.exe process where "CommandLine like '%openclaw%'" call terminate 2>/dev/null || true
+            taskkill.exe //IM "node.exe" //FI "WINDOWTITLE eq openclaw*" //F 2>/dev/null || true
+            ;;
+        *)
+            pkill -9 -f "openclaw" 2>/dev/null || true
+            ;;
+    esac
+    sleep 2
+
+    # Kill by port
+    local gw_port=18789
+    case "$OS_TYPE" in
+        windows)
+            local pids
+            pids=$(netstat.exe -ano 2>/dev/null | grep ":${gw_port} " | grep "LISTEN" | awk '{print $5}' | sort -u)
+            for pid in $pids; do
+                [ -n "$pid" ] && [ "$pid" != "0" ] && taskkill.exe //PID "$pid" //F 2>/dev/null || true
+            done
+            ;;
+        macos)
+            local _pids
+            _pids=$(lsof -ti :${gw_port} 2>/dev/null || true)
+            if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
+            ;;
+        linux|wsl)
+            if command -v fuser >/dev/null 2>&1; then
+                fuser -k "${gw_port}/tcp" 2>/dev/null || true
+            else
+                local _pids
+                _pids=$(lsof -ti :${gw_port} 2>/dev/null || true)
+                if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
+            fi
+            ;;
+    esac
+    sleep 2
+    log "  All processes killed"
+
+    # ---- STEP 2: NUKE ALL NODE/DEVICE STATE ----
+    log "  [2/8] Removing all node pairings, devices, and stale state..."
+    "$OC_BIN" node uninstall --all 2>/dev/null || true
+    "$OC_BIN" node uninstall 2>/dev/null || true
+    "$OC_BIN" devices remove --all 2>/dev/null || true
+    "$OC_BIN" devices revoke --all 2>/dev/null || true
+
+    # Remove stale node/device DB files
+    for f in nodes.json devices.json node-host.json sessions.db gateway.db; do
+        if [ -f "${OPENCLAW_HOME}/$f" ]; then
+            log "  Removing stale: $f"
+            rm -f "${OPENCLAW_HOME}/$f"
+        fi
+    done
+    # Remove node state directories
+    for d in nodes devices node-host sessions; do
+        if [ -d "${OPENCLAW_HOME}/$d" ]; then
+            log "  Removing stale dir: $d/"
+            rm -rf "${OPENCLAW_HOME}/$d"
+        fi
+    done
+    # Remove gateway lock/pid files
+    rm -f "${OPENCLAW_HOME}/gateway.pid" "${OPENCLAW_HOME}/gateway.lock" 2>/dev/null || true
+    rm -f "${OPENCLAW_HOME}/.gateway-port" 2>/dev/null || true
+    log "  All stale state removed"
+
+    # ---- STEP 3: RESET GATEWAY CONFIG ----
+    log "  [3/8] Resetting gateway configuration..."
+    "$OC_BIN" config set gateway.port 18789 2>/dev/null || true
+    "$OC_BIN" config set gateway.host "127.0.0.1" 2>/dev/null || true
+    # Clear any stale gateway tokens/secrets that cause 1006
+    "$OC_BIN" config delete gateway.token 2>/dev/null || true
+    "$OC_BIN" config delete gateway.secret 2>/dev/null || true
+    log "  Gateway config reset"
+
+    # ---- STEP 4: START GATEWAY FRESH ----
+    log "  [4/8] Starting gateway (clean)..."
+    case "$OS_TYPE" in
+        windows)
+            "$OC_BIN" gateway --force >/dev/null 2>&1 &
+            disown "$!" 2>/dev/null || true
+            ;;
+        *)
+            nohup "$OC_BIN" gateway --force >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            ;;
+    esac
+
+    # ---- STEP 5: WAIT FOR GATEWAY ----
+    log "  [5/8] Waiting for gateway to come online..."
+    local attempts=0
+    local gw_up=false
+    while [ "$attempts" -lt 25 ]; do
+        sleep 2
+        attempts=$((attempts + 1))
+        local probe
+        probe=$("$OC_BIN" gateway status 2>&1 || true)
+        if echo "$probe" | grep -qi "ok\|running\|online\|healthy"; then
+            gw_up=true
+            break
+        fi
+        if [ "$((attempts % 5))" -eq 0 ]; then
+            log "  Waiting... ($attempts/25)"
+        fi
+    done
+
+    if $gw_up; then
+        log "  Gateway: ONLINE"
+    else
+        err "  Gateway did not start within 50 seconds"
+        err "  Try running in foreground to see errors:"
+        err "    $OC_BIN gateway --force"
+        return 1
+    fi
+
+    # ---- STEP 6: FRESH NODE INSTALL ----
+    log "  [6/8] Installing fresh node host..."
+    local gw_host="127.0.0.1"
+
+    # Fresh install of local node
+    "$OC_BIN" node install --host "$gw_host" --port "$gw_port" --force 2>/dev/null || {
+        warn "  node install returned error — trying direct run"
+    }
+    sleep 3
+
+    # Start node
+    log "  Starting node host..."
+    case "$OS_TYPE" in
+        windows)
+            "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
+            disown "$!" 2>/dev/null || true
+            ;;
+        *)
+            nohup "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            ;;
+    esac
+
+    # ---- STEP 7: APPROVE ALL PAIRINGS ----
+    log "  [7/8] Approving all device pairings..."
+    sleep 8
+
+    # Approve everything multiple times (race condition with node registration)
+    for _i in 1 2 3; do
+        "$OC_BIN" devices approve --all 2>/dev/null || true
+        "$OC_BIN" nodes approve --all 2>/dev/null || true
+        # Individual device IDs
+        local devices_out
+        devices_out=$("$OC_BIN" devices list 2>&1 || true)
+        local request_ids
+        request_ids=$(echo "$devices_out" | grep -oE '[a-f0-9-]{8,}' | head -10)
+        if [ -n "$request_ids" ]; then
+            for rid in $request_ids; do
+                "$OC_BIN" devices approve "$rid" 2>/dev/null || true
+            done
+        fi
+        sleep 3
+    done
+
+    # ---- STEP 8: WAIT FOR NODES ----
+    log "  [8/8] Waiting for node hosts to connect..."
+    local node_attempts=0
+    local node_up=false
+    while [ "$node_attempts" -lt 20 ]; do
+        sleep 3
+        node_attempts=$((node_attempts + 1))
+        local nodes_out
+        nodes_out=$("$OC_BIN" nodes status 2>&1 || true)
+        if echo "$nodes_out" | grep -qi "Connected: [1-9]\|online\|active"; then
+            node_up=true
+            log "  Node host: CONNECTED"
+            break
+        fi
+        # Keep approving
+        "$OC_BIN" devices approve --all 2>/dev/null || true
+        "$OC_BIN" nodes approve --all 2>/dev/null || true
+        if [ "$((node_attempts % 5))" -eq 0 ]; then
+            log "  Waiting for node... ($node_attempts/20)"
+            # Try restarting the node if it failed
+            "$OC_BIN" node restart --all 2>/dev/null || true
+        fi
+    done
+
+    if $node_up; then
+        log "  Node hosts: CONNECTED (agent has full tool access)"
+    else
+        warn "  Node host did not connect automatically"
+        warn ""
+        warn "  Try running the node in foreground to see the error:"
+        warn "    $OC_BIN node run --host 127.0.0.1 --port 18789"
+        warn ""
+        warn "  Then in another terminal:"
+        warn "    $OC_BIN devices list"
+        warn "    $OC_BIN devices approve --all"
+    fi
+
+    # Verify browser
+    local browser_status
+    browser_status=$("$OC_BIN" browser status 2>&1 || true)
+    if echo "$browser_status" | grep -qi "enabled\|active\|true"; then
+        log "  Browser: ACTIVE"
+    else
+        log "  Activating lobster plugin..."
+        "$OC_BIN" plugins activate lobster 2>/dev/null || true
+    fi
+
+    # Final status
+    echo ""
+    log "============================================"
+    log "  OpenClaw FULL RESET Complete"
+    log "============================================"
+    log "  Gateway: $(if $gw_up; then echo 'ONLINE'; else echo 'OFFLINE'; fi)"
+    log "  Nodes:   $(if $node_up; then echo 'CONNECTED'; else echo 'NOT CONNECTED'; fi)"
+    log "  Port:    $gw_port"
+    log "  Home:    $OPENCLAW_HOME"
+    if $gw_up && $node_up; then
+        log ""
+        log "  OpenClaw is ready! Dashboard: http://localhost:${gw_port}"
+    fi
+    echo ""
+}
+
+# ============================================================================
+# Entry point — supports: install, --restart, --reset, --help
 # ============================================================================
 case "${1:-}" in
+    --reset|reset)
+        standalone_reset
+        ;;
     --restart|-r|restart)
         standalone_restart
         ;;
@@ -2776,11 +3063,13 @@ case "${1:-}" in
         echo "Commands:"
         echo "  (no args)    Full installation wizard"
         echo "  --restart    Restart OpenClaw gateway + all nodes (no reinstall)"
+        echo "  --reset      FULL RESET — nuke all state, rebuild from scratch"
         echo "  --help       Show this help"
         echo ""
         echo "Examples:"
         echo "  bash install.sh              # Full install"
         echo "  bash install.sh --restart    # Just restart everything"
+        echo "  bash install.sh --reset      # Nuclear option — fixes 1006/node errors"
         ;;
     *)
         main "$@"
