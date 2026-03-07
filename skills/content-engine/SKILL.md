@@ -38,6 +38,8 @@ browser press Enter
 - **Video Generation**: Higgsfield (Soul→DoP→Speak), Runway ML, Kling AI, Pika
 - **Audio/Music**: ElevenLabs (browser TTS), Suno AI (browser music gen)
 - **Video Editing**: FFmpeg (exec tool) for assembly, transitions, subtitles
+- **Screenshots**: Desktop/window capture via `exec` tool + screenshot.sh
+- **Shell Commands**: Full shell access via `exec` tool (FFmpeg, ImageMagick, curl, Python, etc.)
 - **Social Publishing**: Instagram, TikTok, YouTube, X/Twitter, LinkedIn — all via browser
 
 ## Required OpenClaw Config

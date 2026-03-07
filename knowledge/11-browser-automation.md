@@ -214,6 +214,54 @@ If session expired (redirected to login page), re-login with credentials.
 
 ---
 
+## Desktop Screenshots (via exec tool)
+
+The `browser screenshot` command only captures the browser tab. To capture the **active window** or **full desktop**, use the `exec` tool:
+
+### Using screenshot.sh helper
+```
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --window
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --full
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --region
+```
+
+### Using scrot directly (Linux/Docker)
+```
+exec scrot -u /tmp/active_window.png          — Active window only
+exec scrot /tmp/full_screen.png               — Full screen
+exec scrot -s /tmp/selected_area.png          — Select region
+```
+
+### Using ImageMagick import (alternative)
+```
+exec import -window root /tmp/screen.png      — Full screen
+exec import -window $(xdotool getactivewindow) /tmp/win.png  — Active window
+```
+
+### When to use which
+- **User asks "take a screenshot"** → use `exec` with screenshot.sh (captures desktop)
+- **You need to see browser page content** → use `browser screenshot`
+- **You need to capture something outside the browser** → use `exec` with screenshot.sh
+
+---
+
+## Exec Tool — Running Commands
+
+The `exec` tool lets you run any shell command. This is essential for:
+
+```
+exec ffmpeg -i input.mp4 -c:v libx264 output.mp4           — Video processing
+exec convert image.png -resize 1080x1080 resized.png        — Image resize/convert
+exec curl -L -o /tmp/file.jpg "https://example.com/img.jpg" — Download files
+exec python3 -c "from PIL import Image; ..."                — Python image processing
+exec jq '.credentials.chatgpt' ~/.openclaw/credentials.json — Read credentials
+exec ls -la /home/node/.openclaw/workspace/                 — List workspace files
+```
+
+**IMPORTANT:** You have full shell access via `exec`. Never say you cannot run commands or scripts.
+
+---
+
 ## Best Practices
 
 ### Human-Like Behavior

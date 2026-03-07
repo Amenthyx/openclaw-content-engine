@@ -101,10 +101,68 @@ When the user says "create an image on ChatGPT":
 9. Download the generated image
 ```
 
+## CRITICAL: You Have an Exec Tool — USE IT
+
+You have a **shell execution tool** via the `exec` tool. You can run ANY command on the system. This includes scripts, FFmpeg, ImageMagick, Python, curl, and everything installed in your environment.
+
+**DO NOT** say "I cannot run commands" or "I don't have that capability."
+**DO NOT** say "screenshot.sh is not in my available tools."
+
+The `exec` tool IS your way to run scripts and commands. Use it like this:
+
+```
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --window
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --full
+```
+
+## Screenshot — How To Take Screenshots
+
+You have TWO ways to take screenshots:
+
+### Method 1: Browser screenshot (of the browser page only)
+```
+browser screenshot                    → Screenshot of current browser tab
+browser screenshot --full-page        → Full page screenshot
+browser screenshot --ref 12           → Screenshot of a specific element
+```
+
+### Method 2: Desktop screenshot (of the active window / full screen)
+Use the `exec` tool to run the screenshot helper script:
+```
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --window
+exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --full
+```
+Or use scrot directly:
+```
+exec scrot -u /tmp/active_window.png      → Active window screenshot
+exec scrot /tmp/full_screen.png           → Full screen screenshot
+exec import -window root /tmp/screen.png  → ImageMagick full screen capture
+```
+
+**When the user says "make a screenshot" or "take a screenshot":**
+1. If a browser is open → use `browser screenshot`
+2. For the desktop/active window → use `exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --window`
+3. Send the screenshot back to the user
+
+## Exec Tool — Run Any Command
+
+Use the `exec` tool to run shell commands. Examples:
+```
+exec ffmpeg -i input.mp4 -c:v libx264 output.mp4     → Video processing
+exec convert image.png -resize 1080x1080 resized.png  → Image resize
+exec curl -o file.jpg "https://example.com/image.jpg"  → Download file
+exec python3 script.py                                  → Run Python
+exec jq '.key' data.json                               → Parse JSON
+exec ls -la /home/node/.openclaw/workspace/             → List files
+exec cat /home/node/.openclaw/credentials.json          → Read credentials
+```
+
 ## Rules
 
 - **ALWAYS** use `browser snapshot` before any interaction — you need ref numbers
 - **ALWAYS** read credentials from `~/.openclaw/credentials.json` before logging in
+- **ALWAYS** use `exec` to run scripts and commands — you have full shell access
+- When asked for a screenshot, **take it yourself** using browser screenshot or exec screenshot.sh
 - Wait 1-3 seconds between browser actions (be human-like)
 - If CAPTCHA appears, tell the user and wait
 - Download generated content immediately — URLs may expire
