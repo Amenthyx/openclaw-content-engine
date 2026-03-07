@@ -45,6 +45,7 @@ OC_BIN=""
 OS_TYPE=""
 AGENT_NAME=""
 AGENT_EMOJI=""
+DOCKER_COMPOSE_DIR=""
 
 # ============================================================================
 # Find openclaw binary (cross-platform)
@@ -99,6 +100,187 @@ find_openclaw_bin() {
         if [ -f "$p" ]; then OC_BIN="$p"; return 0; fi
     done
 
+    return 1
+}
+
+# ============================================================================
+# Ensure Docker daemon + container are running
+# ============================================================================
+ensure_docker_ready() {
+    # ---- Step 1: Find docker-compose.yml ----
+    local candidates=(
+        "${SCRIPT_DIR}/../OpenClaw-Docker"
+        "${SCRIPT_DIR}/../openClaw-Docker"
+        "${SCRIPT_DIR}/../openclaw-docker"
+    )
+    # Also check common Desktop locations
+    local desktop=""
+    case "$OS_TYPE" in
+        windows)
+            if [ -n "${USERPROFILE:-}" ]; then
+                desktop="$(echo "$USERPROFILE" | sed 's|\\|/|g')/Desktop"
+            else
+                desktop="$HOME/Desktop"
+            fi
+            ;;
+        *)
+            desktop="$HOME/Desktop"
+            ;;
+    esac
+    if [ -n "$desktop" ]; then
+        candidates+=("$desktop/OpenClaw-Docker" "$desktop/openClaw-Docker" "$desktop/openclaw-docker")
+    fi
+
+    DOCKER_COMPOSE_DIR=""
+    for d in "${candidates[@]}"; do
+        if [ -f "$d/docker-compose.yml" ]; then
+            DOCKER_COMPOSE_DIR="$(cd "$d" && pwd)"
+            break
+        fi
+    done
+
+    if [ -z "$DOCKER_COMPOSE_DIR" ]; then
+        warn "  Could not find OpenClaw docker-compose.yml automatically."
+        printf "  %bPath to OpenClaw-Docker directory:%b " "$BOLD" "$NC"
+        read -r custom_docker_dir
+        if [ -f "$custom_docker_dir/docker-compose.yml" ]; then
+            DOCKER_COMPOSE_DIR="$(cd "$custom_docker_dir" && pwd)"
+        else
+            err "  No docker-compose.yml found at: $custom_docker_dir"
+            err "  Cannot start Docker container."
+            return 1
+        fi
+    fi
+    log "  Docker compose dir: ${DOCKER_COMPOSE_DIR}"
+
+    # ---- Step 2: Ensure Docker daemon is running ----
+    if ! docker info >/dev/null 2>&1; then
+        log "  Docker daemon is not running — starting Docker Desktop..."
+        case "$OS_TYPE" in
+            windows)
+                # Try common Docker Desktop paths
+                local dd_path=""
+                for p in \
+                    "$(echo "${PROGRAMFILES:-}" | sed 's|\\|/|g')/Docker/Docker/Docker Desktop.exe" \
+                    "/c/Program Files/Docker/Docker/Docker Desktop.exe" \
+                    "$(echo "${LOCALAPPDATA:-}" | sed 's|\\|/|g')/Docker/Docker Desktop.exe"; do
+                    if [ -f "$p" ]; then dd_path="$p"; break; fi
+                done
+                if [ -n "$dd_path" ]; then
+                    log "  Launching: $dd_path"
+                    "$dd_path" &>/dev/null &
+                    disown "$!" 2>/dev/null || true
+                else
+                    # Fallback: try start command
+                    cmd.exe /c "start \"\" \"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\"" 2>/dev/null || true
+                fi
+                ;;
+            macos)
+                open -a "Docker" 2>/dev/null || open -a "Docker Desktop" 2>/dev/null || true
+                ;;
+            linux)
+                sudo systemctl start docker 2>/dev/null || sudo service docker start 2>/dev/null || true
+                ;;
+            wsl)
+                # WSL typically uses Docker Desktop from Windows side
+                cmd.exe /c "start \"\" \"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe\"" 2>/dev/null || true
+                ;;
+        esac
+
+        # Wait for Docker daemon to be ready
+        log "  Waiting for Docker daemon..."
+        local docker_attempts=0
+        while [ "$docker_attempts" -lt 30 ]; do
+            sleep 3
+            docker_attempts=$((docker_attempts + 1))
+            if docker info >/dev/null 2>&1; then
+                log "  Docker daemon is ready"
+                break
+            fi
+            if [ "$((docker_attempts % 5))" -eq 0 ]; then
+                log "  Still waiting for Docker... (${docker_attempts}/30)"
+            fi
+        done
+
+        if ! docker info >/dev/null 2>&1; then
+            err "  Docker daemon did not start within 90 seconds."
+            err "  Please start Docker Desktop manually and re-run this script."
+            return 1
+        fi
+    else
+        log "  Docker daemon: running"
+    fi
+
+    # ---- Step 3: Ensure container is running ----
+    # Get the container name from docker-compose.yml
+    local compose_container=""
+    compose_container=$(grep 'container_name:' "$DOCKER_COMPOSE_DIR/docker-compose.yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '[:space:]')
+    compose_container="${compose_container:-clawbot}"
+
+    if docker ps --format '{{.Names}}' | grep -q "^${compose_container}$"; then
+        log "  Container '${compose_container}' is already running"
+        CONTAINER_NAME="$compose_container"
+        return 0
+    fi
+
+    # Check if container exists but is stopped
+    if docker ps -a --format '{{.Names}}' | grep -q "^${compose_container}$"; then
+        log "  Container '${compose_container}' exists but is stopped — starting..."
+        docker start "$compose_container" 2>/dev/null || {
+            log "  Start failed — rebuilding with docker compose..."
+            (cd "$DOCKER_COMPOSE_DIR" && docker compose up -d --build) || {
+                err "  Failed to start container. Check docker-compose.yml"
+                return 1
+            }
+        }
+    else
+        log "  Container '${compose_container}' does not exist — building and starting..."
+        (cd "$DOCKER_COMPOSE_DIR" && docker compose up -d --build) || {
+            err "  Failed to build/start container. Check docker-compose.yml and .env"
+            return 1
+        }
+    fi
+
+    # ---- Step 4: Wait for container healthcheck ----
+    log "  Waiting for container to be healthy (up to 90s)..."
+    local health_attempts=0
+    while [ "$health_attempts" -lt 30 ]; do
+        sleep 3
+        health_attempts=$((health_attempts + 1))
+        local health
+        health=$(docker inspect --format='{{.State.Health.Status}}' "$compose_container" 2>/dev/null || echo "unknown")
+        case "$health" in
+            healthy)
+                log "  Container '${compose_container}' is healthy"
+                CONTAINER_NAME="$compose_container"
+                return 0
+                ;;
+            unhealthy)
+                err "  Container is unhealthy — check logs: docker logs $compose_container"
+                CONTAINER_NAME="$compose_container"
+                return 1
+                ;;
+        esac
+        # Also check if container is just running (no healthcheck defined)
+        if docker ps --format '{{.Names}}' | grep -q "^${compose_container}$"; then
+            # Running but healthcheck hasn't passed yet — keep waiting
+            if [ "$((health_attempts % 5))" -eq 0 ]; then
+                log "  Container running, health: ${health} (${health_attempts}/30)"
+            fi
+        else
+            err "  Container stopped unexpectedly. Check: docker logs $compose_container"
+            return 1
+        fi
+    done
+
+    # If we get here, healthcheck didn't pass but container might still be usable
+    if docker ps --format '{{.Names}}' | grep -q "^${compose_container}$"; then
+        warn "  Healthcheck didn't pass within 90s, but container is running — proceeding"
+        CONTAINER_NAME="$compose_container"
+        return 0
+    fi
+
+    err "  Container failed to start properly."
     return 1
 }
 
@@ -227,13 +409,27 @@ detect_installations() {
                     read -r cn
                     if [ -n "$cn" ]; then CONTAINER_NAME="$cn"; fi
                 else
-                    printf "  Container name: "
-                    read -r CONTAINER_NAME
-                    if [ -z "$CONTAINER_NAME" ]; then err "Required."; continue; fi
+                    # No running container — try to auto-start Docker + container
+                    log "  No running OpenClaw container found."
+                    log "  Attempting to start Docker and the container automatically..."
+                    if ensure_docker_ready; then
+                        log "  Container '${CONTAINER_NAME}' is ready"
+                    else
+                        err "  Could not start Docker container automatically."
+                        printf "  %bContainer name (if already running elsewhere):%b " "$BOLD" "$NC"
+                        read -r CONTAINER_NAME
+                        if [ -z "$CONTAINER_NAME" ]; then err "Required."; continue; fi
+                    fi
                 fi
                 if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                     err "'${CONTAINER_NAME}' is not running."
-                    continue
+                    warn "  Trying to start it via ensure_docker_ready..."
+                    if ensure_docker_ready; then
+                        log "  Container '${CONTAINER_NAME}' started successfully"
+                    else
+                        err "  Failed. Start Docker Desktop manually and re-run."
+                        continue
+                    fi
                 fi
                 break ;;
             3)
@@ -637,6 +833,311 @@ PYEOF
 }
 
 # ============================================================================
+# [3.5/7] Install required tools inside the environment
+# ============================================================================
+install_tools() {
+    log "=== [3.5/7] Installing Required Tools ==="
+
+    # Helper: run a command in the right environment
+    run_env() {
+        if [ "$INSTALL_MODE" = "docker" ]; then
+            docker exec -u root "$CONTAINER_NAME" bash -c "$*" 2>/dev/null
+        else
+            eval "$@" 2>/dev/null
+        fi
+    }
+
+    run_env_node() {
+        if [ "$INSTALL_MODE" = "docker" ]; then
+            docker exec -u node "$CONTAINER_NAME" bash -c "$*" 2>/dev/null
+        else
+            eval "$@" 2>/dev/null
+        fi
+    }
+
+    # ---- 1. Screenshot tools ----
+    log "  [Tools] Installing screenshot tools..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        # Inside Docker: install scrot + xdotool + xclip for X11 screenshots
+        docker exec -u root "$CONTAINER_NAME" bash -c '
+            apt-get update -qq && apt-get install -y --no-install-recommends \
+                scrot xdotool xclip xdg-utils imagemagick 2>/dev/null
+            rm -rf /var/lib/apt/lists/*
+        ' 2>/dev/null && log "  scrot + xdotool + imagemagick installed" || warn "  Some screenshot tools failed to install"
+    else
+        # Local mode: check OS-specific screenshot tools
+        case "$OS_TYPE" in
+            windows)
+                # Windows has built-in screenshot via PowerShell (Add-Type + CopyFromScreen)
+                # Also check for ShareX or Greenshot CLI
+                if command -v nircmd >/dev/null 2>&1; then
+                    log "  nircmd available (screenshots)"
+                else
+                    log "  Windows: using PowerShell for screenshots"
+                    log "  (Optional) Install nircmd or ShareX for advanced capture"
+                fi
+                ;;
+            macos)
+                # macOS has built-in screencapture
+                log "  macOS: screencapture available (built-in)"
+                ;;
+            linux|wsl)
+                if ! command -v scrot >/dev/null 2>&1; then
+                    log "  Installing scrot..."
+                    sudo apt-get install -y scrot xdotool 2>/dev/null || warn "  Install scrot manually: sudo apt install scrot xdotool"
+                else
+                    log "  scrot already installed"
+                fi
+                ;;
+        esac
+    fi
+
+    # ---- 2. FFmpeg (video/audio processing) ----
+    log "  [Tools] Checking FFmpeg..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        if docker exec "$CONTAINER_NAME" bash -c "command -v ffmpeg" >/dev/null 2>&1; then
+            local ffver
+            ffver=$(docker exec "$CONTAINER_NAME" bash -c "ffmpeg -version 2>&1 | head -1" 2>/dev/null || echo "unknown")
+            log "  FFmpeg: $ffver"
+        else
+            log "  Installing FFmpeg in container..."
+            docker exec -u root "$CONTAINER_NAME" bash -c '
+                apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg
+                rm -rf /var/lib/apt/lists/*
+            ' 2>/dev/null && log "  FFmpeg installed" || warn "  FFmpeg install failed"
+        fi
+    else
+        if command -v ffmpeg >/dev/null 2>&1; then
+            log "  FFmpeg: $(ffmpeg -version 2>&1 | head -1)"
+        else
+            warn "  FFmpeg not found — install it for video/audio processing"
+            case "$OS_TYPE" in
+                windows) warn "  Download from https://ffmpeg.org/download.html or: winget install ffmpeg" ;;
+                macos) warn "  Install: brew install ffmpeg" ;;
+                linux|wsl) warn "  Install: sudo apt install ffmpeg" ;;
+            esac
+        fi
+    fi
+
+    # ---- 3. Playwright browsers (for lobster plugin) ----
+    log "  [Tools] Checking Playwright browsers..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        # Install Playwright + browser deps inside container
+        docker exec -u root "$CONTAINER_NAME" bash -c '
+            # Install Playwright system dependencies
+            apt-get update -qq && apt-get install -y --no-install-recommends \
+                libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+                libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
+                libpango-1.0-0 libcairo2 libasound2 libxshmfence1 2>/dev/null
+            rm -rf /var/lib/apt/lists/*
+        ' 2>/dev/null || true
+
+        # Install Playwright Chromium as node user
+        docker exec -u node "$CONTAINER_NAME" bash -c '
+            npx playwright install chromium 2>/dev/null || true
+        ' 2>/dev/null && log "  Playwright Chromium installed in container" || warn "  Playwright install returned non-zero (may still work)"
+    else
+        if command -v npx >/dev/null 2>&1; then
+            log "  Installing Playwright Chromium..."
+            npx playwright install chromium 2>/dev/null && log "  Playwright Chromium installed" || warn "  Playwright install failed"
+        fi
+    fi
+
+    # ---- 4. Screenshot helper script ----
+    # Create a portable screenshot script that works cross-platform
+    log "  [Tools] Installing screenshot helper script..."
+    local screenshot_script=""
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        screenshot_script="/home/node/.openclaw/workspace/screenshot.sh"
+        docker exec -u node "$CONTAINER_NAME" bash -c "cat > $screenshot_script" <<'SCREENSHOT_EOF'
+#!/usr/bin/env bash
+# Screenshot helper — captures the active window or full screen
+# Usage: screenshot.sh [output_path] [--full|--window|--region]
+set -euo pipefail
+OUTPUT="${1:-/tmp/screenshot_$(date +%Y%m%d_%H%M%S).png}"
+MODE="${2:---window}"
+
+case "$MODE" in
+    --full)
+        if command -v scrot >/dev/null 2>&1; then
+            scrot "$OUTPUT"
+        elif command -v import >/dev/null 2>&1; then
+            import -window root "$OUTPUT"
+        else
+            echo "No screenshot tool available" >&2; exit 1
+        fi
+        ;;
+    --window)
+        if command -v scrot >/dev/null 2>&1; then
+            # Get the active window ID
+            ACTIVE_WIN=$(xdotool getactivewindow 2>/dev/null || echo "")
+            if [ -n "$ACTIVE_WIN" ]; then
+                scrot -u "$OUTPUT" || scrot "$OUTPUT"
+            else
+                scrot "$OUTPUT"
+            fi
+        elif command -v import >/dev/null 2>&1; then
+            ACTIVE_WIN=$(xdotool getactivewindow 2>/dev/null || echo "root")
+            import -window "$ACTIVE_WIN" "$OUTPUT"
+        else
+            echo "No screenshot tool available" >&2; exit 1
+        fi
+        ;;
+    --region)
+        if command -v scrot >/dev/null 2>&1; then
+            scrot -s "$OUTPUT"
+        elif command -v import >/dev/null 2>&1; then
+            import "$OUTPUT"
+        else
+            echo "No screenshot tool available" >&2; exit 1
+        fi
+        ;;
+esac
+
+echo "$OUTPUT"
+SCREENSHOT_EOF
+        docker exec -u node "$CONTAINER_NAME" bash -c "chmod +x $screenshot_script" 2>/dev/null || true
+        log "  screenshot.sh deployed to container workspace"
+    else
+        local ws="${OPENCLAW_HOME}/workspace"
+        mkdir -p "$ws"
+        screenshot_script="$ws/screenshot.sh"
+        cat > "$screenshot_script" <<'SCREENSHOT_EOF'
+#!/usr/bin/env bash
+# Screenshot helper — captures the active window or full screen
+# Usage: screenshot.sh [output_path] [--full|--window]
+set -euo pipefail
+OUTPUT="${1:-screenshot_$(date +%Y%m%d_%H%M%S).png}"
+MODE="${2:---window}"
+
+OS_TYPE="unknown"
+case "$(uname -s 2>/dev/null || echo Unknown)" in
+    Linux*)   OS_TYPE="linux" ;;
+    Darwin*)  OS_TYPE="macos" ;;
+    CYGWIN*|MINGW*|MSYS*) OS_TYPE="windows" ;;
+esac
+
+case "$OS_TYPE" in
+    windows)
+        powershell.exe -NoProfile -Command "
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            \$screen = [System.Windows.Forms.Screen]::PrimaryScreen
+            \$bitmap = New-Object System.Drawing.Bitmap(\$screen.Bounds.Width, \$screen.Bounds.Height)
+            \$graphics = [System.Drawing.Graphics]::FromImage(\$bitmap)
+            \$graphics.CopyFromScreen(\$screen.Bounds.Location, [System.Drawing.Point]::Empty, \$screen.Bounds.Size)
+            \$bitmap.Save('$(cygpath -w "$OUTPUT")')
+            \$graphics.Dispose()
+            \$bitmap.Dispose()
+        " 2>/dev/null
+        ;;
+    macos)
+        if [ "$MODE" = "--window" ]; then
+            screencapture -w "$OUTPUT"
+        else
+            screencapture "$OUTPUT"
+        fi
+        ;;
+    linux)
+        if command -v scrot >/dev/null 2>&1; then
+            if [ "$MODE" = "--window" ]; then
+                scrot -u "$OUTPUT" || scrot "$OUTPUT"
+            else
+                scrot "$OUTPUT"
+            fi
+        elif command -v import >/dev/null 2>&1; then
+            import -window root "$OUTPUT"
+        else
+            echo "No screenshot tool (install scrot)" >&2; exit 1
+        fi
+        ;;
+esac
+
+echo "$OUTPUT"
+SCREENSHOT_EOF
+        chmod +x "$screenshot_script" 2>/dev/null || true
+        log "  screenshot.sh deployed to $ws/"
+    fi
+
+    # ---- 5. Image processing tools (ImageMagick / sharp) ----
+    log "  [Tools] Checking image processing tools..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        if docker exec "$CONTAINER_NAME" bash -c "command -v convert" >/dev/null 2>&1; then
+            log "  ImageMagick: available"
+        else
+            docker exec -u root "$CONTAINER_NAME" bash -c '
+                apt-get update -qq && apt-get install -y --no-install-recommends imagemagick
+                rm -rf /var/lib/apt/lists/*
+            ' 2>/dev/null && log "  ImageMagick installed" || warn "  ImageMagick install failed"
+        fi
+    else
+        if command -v convert >/dev/null 2>&1 || command -v magick >/dev/null 2>&1; then
+            log "  ImageMagick: available"
+        else
+            warn "  ImageMagick not found (optional, for image resizing/conversion)"
+        fi
+    fi
+
+    # ---- 6. Python packages for media processing ----
+    log "  [Tools] Checking Python packages..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec -u node "$CONTAINER_NAME" bash -c '
+            python3 -c "import PIL; import requests" 2>/dev/null && echo "OK" || {
+                pip3 install --user --break-system-packages Pillow requests 2>/dev/null || true
+            }
+        ' 2>/dev/null
+        log "  Python packages: Pillow + requests available"
+    else
+        if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+            log "  Python: available"
+        else
+            warn "  Python not found (optional, for advanced media processing)"
+        fi
+    fi
+
+    # ---- 7. curl / wget (for downloading assets) ----
+    log "  [Tools] Checking download tools..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec "$CONTAINER_NAME" bash -c "command -v curl && command -v wget" >/dev/null 2>&1 \
+            && log "  curl + wget: available" \
+            || {
+                docker exec -u root "$CONTAINER_NAME" bash -c '
+                    apt-get update -qq && apt-get install -y --no-install-recommends curl wget
+                    rm -rf /var/lib/apt/lists/*
+                ' 2>/dev/null && log "  curl + wget installed" || warn "  Download tools install failed"
+            }
+    else
+        command -v curl >/dev/null 2>&1 && log "  curl: available" || warn "  curl not found"
+    fi
+
+    # ---- 8. jq (JSON processing) ----
+    log "  [Tools] Checking jq..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        if docker exec "$CONTAINER_NAME" bash -c "command -v jq" >/dev/null 2>&1; then
+            log "  jq: available"
+        else
+            docker exec -u root "$CONTAINER_NAME" bash -c '
+                apt-get update -qq && apt-get install -y --no-install-recommends jq
+                rm -rf /var/lib/apt/lists/*
+            ' 2>/dev/null && log "  jq installed" || warn "  jq install failed"
+        fi
+    else
+        command -v jq >/dev/null 2>&1 && log "  jq: available" || warn "  jq not found (optional)"
+    fi
+
+    # ---- 9. Node.js global tools (used by pipeline) ----
+    log "  [Tools] Checking Node.js tools..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec -u node "$CONTAINER_NAME" bash -c '
+            command -v sharp-cli >/dev/null 2>&1 || npm install -g sharp-cli 2>/dev/null || true
+        ' 2>/dev/null
+        log "  Node.js tools checked"
+    fi
+
+    log "  All tools checked"
+}
+
+# ============================================================================
 # [4/7] Deploy credentials template
 # ============================================================================
 deploy_credentials() {
@@ -691,13 +1192,27 @@ restart_gateway() {
 
     # --- DOCKER ---
     if [ "$INSTALL_MODE" = "docker" ]; then
-        log "  Stopping container ${CONTAINER_NAME}..."
-        docker stop "$CONTAINER_NAME" 2>/dev/null || true
-        sleep 2
-        log "  Starting container ${CONTAINER_NAME}..."
-        docker start "$CONTAINER_NAME" 2>/dev/null || { err "  Failed to start container"; return; }
-        log "  Waiting for gateway inside container..."
-        sleep 10
+        log "  Restarting container ${CONTAINER_NAME}..."
+        docker restart "$CONTAINER_NAME" 2>/dev/null || {
+            warn "  docker restart failed — trying ensure_docker_ready..."
+            ensure_docker_ready || { err "  Failed to restart container"; return; }
+        }
+        # Wait for healthcheck
+        log "  Waiting for container to be healthy..."
+        local restart_attempts=0
+        while [ "$restart_attempts" -lt 20 ]; do
+            sleep 3
+            restart_attempts=$((restart_attempts + 1))
+            local health
+            health=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+            if [ "$health" = "healthy" ]; then
+                log "  Container '${CONTAINER_NAME}' is healthy"
+                break
+            fi
+            if [ "$((restart_attempts % 5))" -eq 0 ]; then
+                log "  Waiting... health: ${health} (${restart_attempts}/20)"
+            fi
+        done
         log "  Container restarted"
         return
     fi
@@ -1010,6 +1525,36 @@ verify() {
             && log "  Credentials: PRESENT" || warn "  Credentials: NOT FOUND"
     fi
 
+    # --- TOOLS VERIFICATION ---
+    log "  ─── Installed Tools ───"
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        for tool in ffmpeg scrot xdotool convert curl wget jq python3; do
+            if docker exec "$CONTAINER_NAME" bash -c "command -v $tool" >/dev/null 2>&1; then
+                log "  $tool: OK"
+            else
+                warn "  $tool: NOT FOUND"
+            fi
+        done
+        docker exec "$CONTAINER_NAME" bash -c "test -x /home/node/.openclaw/workspace/screenshot.sh" 2>/dev/null \
+            && log "  screenshot.sh: OK" || warn "  screenshot.sh: NOT FOUND"
+    else
+        for tool in ffmpeg curl jq; do
+            if command -v "$tool" >/dev/null 2>&1; then
+                log "  $tool: OK"
+            else
+                warn "  $tool: NOT FOUND"
+            fi
+        done
+        if command -v convert >/dev/null 2>&1 || command -v magick >/dev/null 2>&1; then
+            log "  ImageMagick: OK"
+        else
+            warn "  ImageMagick: NOT FOUND"
+        fi
+        [ -f "${OPENCLAW_HOME}/workspace/screenshot.sh" ] \
+            && log "  screenshot.sh: OK" || warn "  screenshot.sh: NOT FOUND"
+    fi
+    log "  ─── End Tools ───"
+
     # --- FULL DIAGNOSTIC DUMP ---
     # This helps debug when the browser tool isn't loading
     if [ -n "$OC_BIN" ] && [ "$INSTALL_MODE" = "local" ]; then
@@ -1088,6 +1633,16 @@ print_summary() {
     echo "    - content-engine skill (SKILL.md)"
     echo "    - credentials.json template"
     echo ""
+    echo -e "  ${GREEN}Tools:${NC}"
+    echo "    - screenshot.sh         (active window + full screen capture)"
+    echo "    - FFmpeg                (video/audio merging, conversion)"
+    echo "    - Playwright Chromium   (headless browser for lobster)"
+    echo "    - ImageMagick           (image resize, convert, composite)"
+    echo "    - scrot + xdotool       (X11 screenshot + window control)"
+    echo "    - curl + wget           (asset download)"
+    echo "    - jq                    (JSON processing)"
+    echo "    - Python + Pillow       (image processing)"
+    echo ""
     echo -e "  ${GREEN}Configured:${NC}"
     echo "    - lobster plugin        (browser tool for agent)"
     echo "    - llm-task plugin       (background task execution)"
@@ -1098,7 +1653,6 @@ print_summary() {
     echo "    - exec timeout 30min    (long-running tasks)"
     echo "    - sandbox = off         (browser + filesystem)"
     echo "    - 4 agents / 8 subs    (parallel execution)"
-    echo "    - Playwright browsers   (headless Chromium)"
     echo "    - workspace directory   (asset storage)"
     echo ""
 
@@ -1156,6 +1710,7 @@ main() {
     install_skill
     create_agent
     configure_openclaw
+    install_tools
     deploy_credentials
     reindex_memory
     restart_gateway
