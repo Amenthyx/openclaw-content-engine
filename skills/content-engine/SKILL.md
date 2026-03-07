@@ -1,80 +1,84 @@
 ---
 name: content-engine
-description: Autonomous multi-platform content creation engine. Logs into platforms via browser (no API keys) to generate videos, images, music, and publish to social media.
+description: Fully autonomous agent with browser control, account creation, system access, scheduled tasks, and multi-platform content creation. Operates like a human — logs into websites, creates accounts, manages files, and publishes content.
 homepage: https://github.com/Amenthyx/openclaw-content-engine
 metadata:
   {
     "openclaw":
       {
-        "emoji": "🎬",
+        "emoji": "🤖",
       },
   }
 ---
 
-# Content Engine
+# Fully Autonomous Agent
 
-Autonomous multi-platform content creation system that operates through OpenClaw's **built-in browser tool** — no API keys needed. Logs into platforms with your credentials, creates content through the UI, and publishes to social media.
+Operates as a fully autonomous personal AI agent through OpenClaw's built-in tools. Browses the web, logs into platforms, creates new accounts, controls the machine, runs scheduled tasks, and creates/publishes content — all without API keys.
 
 ## How It Works
 
-1. You send ClawBot a content request (via Telegram, Discord, etc.)
-2. ClawBot searches its memory for relevant knowledge (platform workflows, prompts, specs)
-3. ClawBot opens the browser, logs into the needed platform
-4. Creates content through the browser UI (images, videos, music, voiceovers)
-5. Downloads assets locally, processes with FFmpeg if needed
-6. Logs into social platforms and publishes
+1. Reads SOUL.md for personality, goals, and schedule
+2. Reads credentials.json for platform logins
+3. Uses the browser tool to navigate and interact with any website
+4. Uses the exec tool for system operations (files, apps, commands)
+5. Runs heartbeat tasks at configured intervals
+6. Communicates across Telegram, Discord, WhatsApp, Slack, Signal
 
-All browser interactions use OpenClaw's built-in `browser` tool:
-```
-browser navigate https://chat.openai.com
-browser snapshot
-browser type [ref] "Generate an image: sunset over mountains"
-browser press Enter
-```
+## Core Capabilities
 
-## Capabilities
+### Browser Automation
+- Navigate any website, fill forms, click buttons, download files
+- Log into platforms with email/password + auto 2FA
+- Create new accounts (signup, email verification, 2FA setup)
+- Session persistence via cookies (auto-saved between sessions)
 
-- **Image Generation**: ChatGPT (DALL-E via browser), Higgsfield Soul, Midjourney (Discord), Canva
-- **Video Generation**: Higgsfield (Soul→DoP→Speak), Runway ML, Kling AI, Pika
-- **Audio/Music**: ElevenLabs (browser TTS), Suno AI (browser music gen)
-- **Video Editing**: FFmpeg (exec tool) for assembly, transitions, subtitles
-- **Screenshots**: Desktop/window capture via `exec` tool + screenshot.sh
-- **Shell Commands**: Full shell access via `exec` tool (FFmpeg, ImageMagick, curl, Python, etc.)
-- **Social Publishing**: Instagram, TikTok, YouTube, X/Twitter, LinkedIn — all via browser
+### System Control
+- File operations (create, read, move, copy, delete, search)
+- Application launching and window management
+- Screenshot capture (browser + desktop)
+- Process management (start, stop, monitor)
+- Package installation and system info
 
-## Required OpenClaw Config
+### Content Creation
+- Image generation: ChatGPT (DALL-E), Midjourney, Canva, Stability AI
+- Video generation: Higgsfield, Runway ML, Kling AI, Pika
+- Audio/Music: ElevenLabs (TTS), Suno AI (music)
+- Video editing: FFmpeg (assembly, transitions, subtitles)
+- Social publishing: Instagram, TikTok, YouTube, X/Twitter, LinkedIn
 
-The browser tool and exec tool require a node host connected to the gateway:
+### Autonomous Operations
+- Heartbeat scheduler for recurring background tasks
+- Proactive monitoring (inbox, tasks, errors)
+- Self-healing with retry strategies
+- Multi-step pipeline orchestration
+- Decision framework (act vs ask based on risk level)
+
+## Tools Used
+
+- **browser** — Playwright browser (lobster plugin)
+- **exec** — Shell command execution
+- **file read/write** — Local file management
+- **totp.sh** — 2FA code generation from stored secrets
+- **pwgen.sh** — Secure password generation
+- **screenshot.sh** — Desktop/window capture
+
+## Required Config
+
 ```bash
 openclaw config set tools.allow '["*"]'
 openclaw config set agents.defaults.sandbox.mode off
+openclaw config set plugins.entries.lobster.enabled true
 openclaw node install && openclaw node restart
 ```
 
-## Credentials
-
-Platform logins stored in `~/.openclaw/credentials.json`. Edit with your email/password for each platform.
-
-## Example Usage
-
-Send to ClawBot:
-```
-Create a product promo image for my coffee brand. Modern, warm colors.
-```
-
-ClawBot will:
-1. Open browser → navigate to ChatGPT
-2. Log in (or restore saved session)
-3. Ask DALL-E to generate the image
-4. Download the image
-5. Return it to you
-
 ## Memory Knowledge Base
 
-13 knowledge files in `~/.openclaw/memory/content-engine/` covering:
-- Platform login flows and browser navigation
+16 knowledge files covering:
+- Browser automation and platform login flows
+- Account creation and email verification
+- System control and OS operations
+- Autonomous operations and scheduling
 - Image/video/audio generation workflows
-- Content strategy and platform optimization
+- Content strategy and publishing
 - Prompt engineering per platform
-- Pipeline templates and error recovery
-- Safety, compliance, and accessibility
+- Safety, compliance, and error recovery

@@ -1,24 +1,32 @@
-# OpenClaw Content Engine
+# OpenClaw Fully Autonomous Agent
 
 ## What is this?
-A comprehensive knowledge base that transforms OpenClaw (ClawBot) into a fully autonomous content creation agent. Operates entirely through **browser automation** — no API keys needed. Logs into platforms with email/password, creates content through the UI, and publishes to social media.
+A complete setup that transforms OpenClaw into a fully autonomous AI agent. Operates like a human — browses the web, logs into platforms, creates new accounts, controls the machine, runs scheduled background tasks, and communicates across multiple channels. No API keys needed.
 
 ## Architecture
-- **13 markdown knowledge files** organized by domain
-- Designed for OpenClaw's **SQLite + FTS5 + vector embedding** memory system
-- All platform interactions via **Chromium browser on Xvfb** (visible via noVNC)
-- **FFmpeg** for local video/audio processing
-- Credentials stored in `credentials.json` (email/password per platform)
-- Session cookies cached for persistent login
+- **16 markdown knowledge files** organized by domain (content + autonomous ops + system control)
+- **SOUL.md** — persistent agent personality, goals, schedule
+- **IDENTITY.md** — agent capabilities and behavioral instructions
+- Browser automation via **Playwright** (lobster plugin)
+- System control via **exec** tool (files, apps, processes, network)
+- **Heartbeat scheduler** for recurring background tasks
+- **Multi-channel gateway** (Telegram, Discord, WhatsApp, Slack, Signal)
+- **Session persistence** — cookies auto-saved between sessions
+- **2FA auto-handling** — TOTP codes generated from stored secrets
+- Credentials stored in `credentials.json` (30+ platform slots)
 
-## Key Principle
-No API keys. No tokens. ClawBot logs into every platform like a human user and performs all actions through the browser UI.
-
-## Platforms Supported (via browser login)
-ChatGPT (DALL-E images + scripts), Higgsfield (avatar videos), ElevenLabs (voiceovers), Runway ML (cinematic video), Suno AI (music), Midjourney (via Discord), Canva (designs), Stability AI (SD3), Kling AI (video), Pika (video), Instagram, TikTok, YouTube, X/Twitter, LinkedIn, Dropbox, Google Drive
+## Key Capabilities
+- Browse any website, log in, interact with UIs
+- Create new accounts (signup, email verification, 2FA setup)
+- Control the machine (files, apps, clipboard, screenshots)
+- Generate content (images, videos, music, voiceovers)
+- Publish to social media
+- Run scheduled tasks via heartbeat
+- Communicate across messaging platforms
 
 ## Installation
 ```bash
-bash install-to-clawbot.sh
-docker exec -it clawbot nano /home/node/.openclaw/credentials.json  # add your logins
+bash install.sh          # Linux/macOS/WSL/Git Bash
+# or
+powershell -ExecutionPolicy Bypass -File install.ps1  # Windows
 ```

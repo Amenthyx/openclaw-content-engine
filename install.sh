@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Content Engine — Cross-Platform Installer (bash)
+# OpenClaw Fully Autonomous Agent — Cross-Platform Installer (bash)
 # Works on: Linux, macOS, Windows (Git Bash / WSL / MSYS2 / Cygwin)
-# Configures ALL OpenClaw plugins, tools, and settings for full autonomy
+# Sets up a fully autonomous agent with browser control, system access,
+# account creation, heartbeat scheduler, multi-channel gateway, and more.
 # ============================================================================
 set -euo pipefail
 
@@ -14,9 +15,9 @@ else
     RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; NC=''
 fi
 
-log()  { echo -e "${GREEN}[Content-Engine]${NC} $*"; }
-warn() { echo -e "${YELLOW}[Content-Engine]${NC} $*"; }
-err()  { echo -e "${RED}[Content-Engine]${NC} $*" >&2; }
+log()  { printf '%b\n' "${GREEN}[OpenClaw]${NC} $*"; }
+warn() { printf '%b\n' "${YELLOW}[OpenClaw]${NC} $*"; }
+err()  { printf '%b\n' "${RED}[OpenClaw]${NC} $*" >&2; }
 
 # --- Detect OS ---
 detect_os() {
@@ -46,6 +47,16 @@ OS_TYPE=""
 AGENT_NAME=""
 AGENT_EMOJI=""
 DOCKER_COMPOSE_DIR=""
+SOUL_TEMPLATE="${SCRIPT_DIR}/SOUL.md"
+OWNER_NAME=""
+COMM_STYLE=""
+NOTIFY_CHANNEL=""
+WORKING_HOURS=""
+ENABLE_HEARTBEAT=""
+HEARTBEAT_INTERVAL=""
+ENABLE_CHANNELS=""
+CHANNEL_CONFIGS=""
+AUTONOMY_LEVEL="1"
 
 # ============================================================================
 # Find openclaw binary (cross-platform)
@@ -346,48 +357,48 @@ detect_installations() {
         if [ -n "$docker_containers" ]; then found_docker=true; fi
     fi
 
-    echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}  OpenClaw Content Engine Installer${NC}"
-    echo -e "${CYAN}  OS: ${OS_TYPE} | Shell: ${SHELL:-bash}${NC}"
-    echo -e "${CYAN}============================================================${NC}"
+    printf '%b\n' "${CYAN}============================================================${NC}"
+    printf '%b\n' "${CYAN}  OpenClaw Content Engine Installer${NC}"
+    printf '%b\n' "${CYAN}  OS: ${OS_TYPE} | Shell: ${SHELL:-bash}${NC}"
+    printf '%b\n' "${CYAN}============================================================${NC}"
     echo ""
-    echo -e "  ${BOLD}Detected:${NC}"
+    printf '%b\n' "  ${BOLD}Detected:${NC}"
     echo ""
 
     if $found_local; then
-        echo -e "  ${GREEN}[LOCAL]${NC}   ${local_path}"
+        printf '%b\n' "  ${GREEN}[LOCAL]${NC}   ${local_path}"
     fi
     if $found_docker; then
-        echo -e "  ${GREEN}[DOCKER]${NC}  Containers:"
+        printf '%b\n' "  ${GREEN}[DOCKER]${NC}  Containers:"
         echo "$docker_containers" | while read -r name; do
-            echo -e "            - ${name}"
+            printf '%b\n' "            - ${name}"
         done
     fi
     if ! $found_local && ! $found_docker; then
-        echo -e "  ${YELLOW}No OpenClaw installation detected.${NC}"
-        echo -e "  ${YELLOW}Install OpenClaw first: https://docs.openclaw.ai${NC}"
+        printf '%b\n' "  ${YELLOW}No OpenClaw installation detected.${NC}"
+        printf '%b\n' "  ${YELLOW}Install OpenClaw first: https://docs.openclaw.ai${NC}"
     fi
 
     echo ""
-    echo -e "${CYAN}------------------------------------------------------------${NC}"
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
     echo ""
-    echo -e "  ${BOLD}Where do you want to install?${NC}"
+    printf '%b\n' "  ${BOLD}Where do you want to install?${NC}"
     echo ""
-    echo -e "  ${BOLD}1)${NC} Local install"
+    printf '%b\n' "  ${BOLD}1)${NC} Local install"
     if $found_local; then
-        echo -e "     -> ${local_path}"
+        printf '%b\n' "     -> ${local_path}"
     else
-        echo -e "     -> ~/.openclaw"
+        printf '%b\n' "     -> ~/.openclaw"
     fi
     echo ""
-    echo -e "  ${BOLD}2)${NC} Docker container"
+    printf '%b\n' "  ${BOLD}2)${NC} Docker container"
     if $found_docker; then
-        echo -e "     -> $(echo "$docker_containers" | head -1)"
+        printf '%b\n' "     -> $(echo "$docker_containers" | head -1)"
     else
-        echo -e "     -> Specify container name"
+        printf '%b\n' "     -> Specify container name"
     fi
     echo ""
-    echo -e "  ${BOLD}3)${NC} Custom path"
+    printf '%b\n' "  ${BOLD}3)${NC} Custom path"
     echo ""
 
     while true; do
@@ -451,25 +462,118 @@ detect_installations() {
     fi
     echo ""
 
-    # --- Agent name ---
-    echo -e "${CYAN}------------------------------------------------------------${NC}"
+    # --- Agent Identity ---
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
     echo ""
-    echo -e "  ${BOLD}Agent Configuration${NC}"
+    printf '%b\n' "  ${BOLD}Agent Identity${NC}"
     echo ""
-    echo -e "  The installer will create a dedicated content engine agent."
-    echo -e "  This agent will have browser control, content creation skills,"
-    echo -e "  and its own identity."
+    printf '%b\n' "  This installer sets up a fully autonomous agent that can:"
+    printf '%b\n' "  - Browse the web, log in, create accounts"
+    printf '%b\n' "  - Control your machine (files, apps, clipboard)"
+    printf '%b\n' "  - Run scheduled tasks (heartbeat) 24/7"
+    printf '%b\n' "  - Communicate across multiple channels"
+    printf '%b\n' "  - Create content and publish to social media"
     echo ""
-    printf "  %bAgent name%b [ContentEngine]: " "$BOLD" "$NC"
+    printf "  %bAgent name%b [OpenClaw]: " "$BOLD" "$NC"
     read -r agent_input
-    AGENT_NAME="${agent_input:-ContentEngine}"
+    AGENT_NAME="${agent_input:-OpenClaw}"
 
-    printf "  %bAgent emoji%b [🎬]: " "$BOLD" "$NC"
+    printf "  %bAgent emoji%b [🤖]: " "$BOLD" "$NC"
     read -r emoji_input
-    AGENT_EMOJI="${emoji_input:-🎬}"
+    AGENT_EMOJI="${emoji_input:-🤖}"
+
+    printf "  %bYour name (agent's owner)%b []: " "$BOLD" "$NC"
+    read -r owner_input
+    OWNER_NAME="${owner_input:-}"
 
     echo ""
     log "Agent: ${AGENT_EMOJI} ${AGENT_NAME}"
+    echo ""
+
+    # --- Autonomy Level ---
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
+    echo ""
+    printf '%b\n' "  ${BOLD}Autonomy Configuration${NC}"
+    echo ""
+    printf '%b\n' "  How autonomous should the agent be?"
+    echo ""
+    printf '%b\n' "  ${BOLD}1)${NC} Full autonomy — act on everything, only ask for irreversible actions"
+    printf '%b\n' "  ${BOLD}2)${NC} Balanced — act on routine tasks, ask for new/unfamiliar ones"
+    printf '%b\n' "  ${BOLD}3)${NC} Conservative — always ask before taking action"
+    echo ""
+    printf "  %bAutonomy level [1/2/3]%b [1]: " "$BOLD" "$NC"
+    read -r autonomy_input
+    AUTONOMY_LEVEL="${autonomy_input:-1}"
+
+    # --- Communication style ---
+    printf "  %bCommunication style%b [concise/detailed/casual] [concise]: " "$BOLD" "$NC"
+    read -r style_input
+    COMM_STYLE="${style_input:-concise}"
+
+    # --- Working hours ---
+    printf "  %bWorking hours%b [24/7 / business / custom] [24/7]: " "$BOLD" "$NC"
+    read -r hours_input
+    WORKING_HOURS="${hours_input:-24/7}"
+
+    echo ""
+
+    # --- Heartbeat Scheduler ---
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
+    echo ""
+    printf '%b\n' "  ${BOLD}Heartbeat Scheduler${NC}"
+    echo ""
+    printf '%b\n' "  The heartbeat wakes the agent at intervals to run"
+    printf '%b\n' "  background tasks (monitoring, scheduled posts, inbox checks)."
+    echo ""
+    printf "  %bEnable heartbeat?%b [Y/n]: " "$BOLD" "$NC"
+    read -r hb_input
+    case "${hb_input:-Y}" in
+        [nN]*) ENABLE_HEARTBEAT="false" ;;
+        *)     ENABLE_HEARTBEAT="true" ;;
+    esac
+
+    if [ "$ENABLE_HEARTBEAT" = "true" ]; then
+        printf "  %bHeartbeat interval (minutes)%b [15]: " "$BOLD" "$NC"
+        read -r hb_interval
+        HEARTBEAT_INTERVAL="${hb_interval:-15}"
+        log "  Heartbeat: every ${HEARTBEAT_INTERVAL} minutes"
+    else
+        HEARTBEAT_INTERVAL="0"
+        log "  Heartbeat: disabled"
+    fi
+    echo ""
+
+    # --- Multi-Channel Gateway ---
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
+    echo ""
+    printf '%b\n' "  ${BOLD}Communication Channels${NC}"
+    echo ""
+    printf '%b\n' "  Which channels should the agent monitor?"
+    printf '%b\n' "  (Configure tokens/keys after install in OpenClaw settings)"
+    echo ""
+
+    CHANNEL_CONFIGS=""
+    for ch in telegram discord whatsapp slack signal; do
+        printf "  %bEnable ${ch}?%b [Y/n]: " "$BOLD" "$NC"
+        read -r ch_input
+        case "${ch_input:-Y}" in
+            [nN]*) ;;
+            *)     CHANNEL_CONFIGS="${CHANNEL_CONFIGS} ${ch}" ;;
+        esac
+    done
+    CHANNEL_CONFIGS=$(echo "$CHANNEL_CONFIGS" | xargs)
+
+    echo ""
+    if [ -n "$CHANNEL_CONFIGS" ]; then
+        log "  Channels: ${CHANNEL_CONFIGS}"
+    else
+        log "  Channels: none (configure later)"
+    fi
+
+    # --- Notification channel ---
+    printf "  %bPrimary notification channel%b [telegram]: " "$BOLD" "$NC"
+    read -r notify_input
+    NOTIFY_CHANNEL="${notify_input:-telegram}"
     echo ""
 }
 
@@ -496,7 +600,7 @@ oc_cmd() {
 # [1/7] Install knowledge base
 # ============================================================================
 install_knowledge() {
-    log "=== [1/7] Installing Knowledge Base ==="
+    log "=== [1/10] Installing Knowledge Base ==="
 
     if [ "$INSTALL_MODE" = "local" ]; then
         mkdir -p "${OPENCLAW_HOME}/memory/content-engine"
@@ -522,7 +626,7 @@ install_knowledge() {
 # [2/7] Install skill
 # ============================================================================
 install_skill() {
-    log "=== [2/7] Installing Skill ==="
+    log "=== [2/10] Installing Skill ==="
 
     if [ "$INSTALL_MODE" = "local" ]; then
         mkdir -p "${OPENCLAW_HOME}/skills/content-engine"
@@ -546,7 +650,7 @@ install_skill() {
 # [2.5/7] Set up the default agent with browser + content identity
 # ============================================================================
 create_agent() {
-    log "=== [2.5/7] Setting Up Agent: ${AGENT_EMOJI} ${AGENT_NAME} ==="
+    log "=== [2.5/10] Setting Up Agent: ${AGENT_EMOJI} ${AGENT_NAME} ==="
 
     local identity_src="${SCRIPT_DIR}/IDENTITY.md"
     local identity_tmp=""
@@ -632,10 +736,66 @@ create_agent() {
 }
 
 # ============================================================================
-# [3/7] Configure OpenClaw for full autonomy
+# [2.7/10] Deploy SOUL.md — persistent personality and goals
+# ============================================================================
+deploy_soul() {
+    log "=== [2.7/10] Deploying SOUL.md (Agent Personality & Goals) ==="
+
+    local soul_src="${SCRIPT_DIR}/SOUL.md"
+    if [ ! -f "$soul_src" ]; then
+        warn "  SOUL.md template not found — skipping"
+        return
+    fi
+
+    local soul_tmp
+    soul_tmp=$(mktemp)
+
+    # Customize SOUL.md with user's answers
+    sed \
+        -e "s|\[Your name\]|${OWNER_NAME:-Not set}|" \
+        -e "s|\[concise/detailed/casual/formal\]|${COMM_STYLE:-concise}|" \
+        -e "s|\[24/7 / business hours only / custom schedule\]|${WORKING_HOURS:-24/7}|" \
+        -e "s|\[Telegram / Discord / Slack / all\]|${NOTIFY_CHANNEL:-telegram}|" \
+        "$soul_src" > "$soul_tmp"
+
+    # Set autonomy level text
+    local autonomy_text="Act autonomously on all routine tasks. Only ask for irreversible or high-risk actions."
+    case "$AUTONOMY_LEVEL" in
+        2) autonomy_text="Act on routine/familiar tasks. Ask before attempting new or unfamiliar operations." ;;
+        3) autonomy_text="Always ask before taking any action. Provide recommendations but wait for approval." ;;
+    esac
+    # Insert autonomy directive after "Operating Mode" line
+    # Portable sed -i: macOS requires sed -i '', Linux requires sed -i
+    local soul_tmp2
+    soul_tmp2=$(mktemp)
+    sed "s|24/7 autonomous with human oversight for critical decisions|${autonomy_text}|" "$soul_tmp" > "$soul_tmp2" 2>/dev/null && mv "$soul_tmp2" "$soul_tmp" || rm -f "$soul_tmp2"
+
+    if [ "$INSTALL_MODE" = "local" ]; then
+        local ws="${OPENCLAW_HOME}/workspace"
+        mkdir -p "$ws"
+        if [ -f "$ws/SOUL.md" ]; then
+            cp "$ws/SOUL.md" "$ws/SOUL.md.bak"
+            log "  Backed up existing SOUL.md"
+        fi
+        cp "$soul_tmp" "$ws/SOUL.md"
+        log "  SOUL.md deployed to $ws/"
+    else
+        local docker_ws="/home/node/.openclaw/workspace"
+        docker exec "$CONTAINER_NAME" bash -c "mkdir -p $docker_ws" 2>/dev/null || true
+        docker exec "$CONTAINER_NAME" bash -c "test -f $docker_ws/SOUL.md && cp $docker_ws/SOUL.md $docker_ws/SOUL.md.bak" 2>/dev/null || true
+        docker cp "$soul_tmp" "${CONTAINER_NAME}:$docker_ws/SOUL.md"
+        docker exec "$CONTAINER_NAME" bash -c "chown node:node $docker_ws/SOUL.md" 2>/dev/null || true
+        log "  SOUL.md deployed to container workspace"
+    fi
+
+    rm -f "$soul_tmp" 2>/dev/null || true
+}
+
+# ============================================================================
+# [3/10] Configure OpenClaw for full autonomy
 # ============================================================================
 configure_openclaw() {
-    log "=== [3/7] Configuring OpenClaw for Full Autonomy ==="
+    log "=== [3/10] Configuring OpenClaw for Full Autonomy ==="
 
     if [ "$INSTALL_MODE" = "local" ] && [ -z "$OC_BIN" ]; then
         warn "  openclaw CLI not found — writing config via JSON fallback"
@@ -710,12 +870,68 @@ configure_via_cli() {
     oc_config set messages.ackReactionScope group-mentions
 
     # --- BROWSER PROFILE ---
-    # "openclaw" = headless Playwright; works without Chrome/Chromium installed
     log "  [Browser] Setting default profile to 'openclaw' (headless Playwright)..."
     oc_config set browser.defaultProfile openclaw
-
-    # Create the headless profile if it doesn't exist
     oc_cmd browser create-profile --name openclaw --driver openclaw --color "#FF4500" 2>/dev/null || true
+
+    # --- SESSION PERSISTENCE ---
+    log "  [Sessions] Enabling cookie/session persistence..."
+    oc_config set browser.persistSessions true
+    oc_config set browser.cookieStorage file
+    oc_config set sessions.autoSave true
+    oc_config set sessions.maxAge "30d"
+
+    # --- HEARTBEAT SCHEDULER ---
+    if [ "$ENABLE_HEARTBEAT" = "true" ] && [ "$HEARTBEAT_INTERVAL" -gt 0 ] 2>/dev/null; then
+        log "  [Heartbeat] Configuring scheduler (every ${HEARTBEAT_INTERVAL}m)..."
+        oc_config set heartbeat.enabled true
+        oc_config set heartbeat.intervalMinutes "$HEARTBEAT_INTERVAL"
+        oc_config set heartbeat.tasks.checkInbox true
+        oc_config set heartbeat.tasks.monitorApps true
+        oc_config set heartbeat.tasks.scheduledContent true
+        oc_config set heartbeat.tasks.healthCheck true
+    else
+        log "  [Heartbeat] Disabled"
+        oc_config set heartbeat.enabled false
+    fi
+
+    # --- MULTI-CHANNEL GATEWAY ---
+    if [ -n "$CHANNEL_CONFIGS" ]; then
+        log "  [Channels] Enabling communication channels..."
+        for ch in $CHANNEL_CONFIGS; do
+            oc_config set "channels.${ch}.enabled" true
+            oc_config set "tools.elevated.allowFrom.${ch}" '["*"]'
+            log "    - ${ch}: enabled"
+        done
+    fi
+
+    # --- NOTIFICATION PREFERENCES ---
+    if [ -n "$NOTIFY_CHANNEL" ]; then
+        oc_config set notifications.defaultChannel "$NOTIFY_CHANNEL"
+        oc_config set notifications.onTaskComplete true
+        oc_config set notifications.onError true
+        oc_config set notifications.onHeartbeat false
+    fi
+
+    # --- AUTONOMOUS AGENT CAPABILITIES ---
+    log "  [Autonomy] Enabling full agent capabilities..."
+    # File system access
+    oc_config set tools.filesystem.enabled true
+    oc_config set tools.filesystem.allowWrite true
+    # Clipboard access
+    oc_config set tools.clipboard.enabled true
+    # Process management
+    oc_config set tools.process.enabled true
+    # Network access
+    oc_config set tools.network.enabled true
+    # Account/credential management
+    oc_config set tools.credentials.autoSave true
+    # Memory — long-term retention
+    oc_config set memory.longTerm.enabled true
+    oc_config set memory.longTerm.autoIndex true
+    # Sub-agent spawning for complex tasks
+    oc_config set agents.defaults.canSpawn true
+    oc_config set agents.defaults.canDelegate true
 
     # --- VERIFY BROWSER TOOL ---
     log "  [Browser] Verifying browser tool availability..."
@@ -725,7 +941,6 @@ configure_via_cli() {
         log "  Browser tool: AVAILABLE"
     else
         warn "  Browser tool not visible yet — will be available after gateway restart"
-        # Try activating lobster one more time
         oc_cmd plugins activate lobster 2>/dev/null || true
     fi
 
@@ -777,14 +992,31 @@ if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
+cfg.browser.persistSessions = true;
+cfg.browser.cookieStorage = 'file';
+if (!cfg.sessions) cfg.sessions = {};
+cfg.sessions.autoSave = true;
+cfg.sessions.maxAge = '30d';
+if (!cfg.heartbeat) cfg.heartbeat = {};
+cfg.heartbeat.enabled = process.argv[3] === 'true';
+cfg.heartbeat.intervalMinutes = parseInt(process.argv[4]) || 15;
+cfg.heartbeat.tasks = { checkInbox: true, monitorApps: true, scheduledContent: true, healthCheck: true };
+if (!cfg.notifications) cfg.notifications = {};
+cfg.notifications.defaultChannel = process.argv[5] || 'telegram';
+cfg.notifications.onTaskComplete = true;
+cfg.notifications.onError = true;
+if (!cfg.memory) cfg.memory = {};
+cfg.memory.longTerm = { enabled: true, autoIndex: true };
+cfg.agents.defaults.canSpawn = true;
+cfg.agents.defaults.canDelegate = true;
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
-" "$config_file" "$ws" 2>&1 && log "  Config written" || err "  Node.js config write failed"
+" "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" 2>&1 && log "  Config written" || err "  Node.js config write failed"
 
     elif command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
         local py
         if command -v python3 >/dev/null 2>&1; then py="python3"; else py="python"; fi
         log "  Writing config via Python..."
-        "$py" - "$config_file" "$ws" <<'PYEOF'
+        "$py" - "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" <<'PYEOF'
 import json, sys, os
 path, ws = sys.argv[1], sys.argv[2]
 cfg = {}
@@ -821,6 +1053,23 @@ cfg.setdefault("messages", {})
 cfg["messages"]["ackReactionScope"] = "group-mentions"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
+cfg["browser"]["persistSessions"] = True
+cfg["browser"]["cookieStorage"] = "file"
+cfg.setdefault("sessions", {})
+cfg["sessions"]["autoSave"] = True
+cfg["sessions"]["maxAge"] = "30d"
+cfg.setdefault("heartbeat", {})
+cfg["heartbeat"]["enabled"] = sys.argv[3] == "true" if len(sys.argv) > 3 else False
+cfg["heartbeat"]["intervalMinutes"] = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4].isdigit() else 15
+cfg["heartbeat"]["tasks"] = {"checkInbox": True, "monitorApps": True, "scheduledContent": True, "healthCheck": True}
+cfg.setdefault("notifications", {})
+cfg["notifications"]["defaultChannel"] = sys.argv[5] if len(sys.argv) > 5 else "telegram"
+cfg["notifications"]["onTaskComplete"] = True
+cfg["notifications"]["onError"] = True
+cfg.setdefault("memory", {})
+cfg["memory"]["longTerm"] = {"enabled": True, "autoIndex": True}
+cfg["agents"]["defaults"]["canSpawn"] = True
+cfg["agents"]["defaults"]["canDelegate"] = True
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
@@ -836,7 +1085,7 @@ PYEOF
 # [3.5/7] Install required tools inside the environment
 # ============================================================================
 install_tools() {
-    log "=== [3.5/7] Installing Required Tools ==="
+    log "=== [4/10] Installing Required Tools ==="
 
     # Helper: run a command in the right environment
     run_env() {
@@ -1059,6 +1308,81 @@ SCREENSHOT_EOF
         log "  screenshot.sh deployed to $ws/"
     fi
 
+    # ---- 4.5 TOTP helper script (generates 2FA codes from secrets) ----
+    log "  [Tools] Installing TOTP helper script..."
+    local totp_content='#!/usr/bin/env bash
+# TOTP helper — generates 2FA codes from secrets in credentials.json
+# Usage: totp.sh <platform_name>
+# Example: totp.sh chatgpt → prints the current TOTP code
+set -euo pipefail
+PLATFORM="${1:?Usage: totp.sh <platform>}"
+CREDS="${HOME}/.openclaw/credentials.json"
+if [ ! -f "$CREDS" ]; then echo "credentials.json not found" >&2; exit 1; fi
+
+SECRET=""
+if command -v jq >/dev/null 2>&1; then
+    SECRET=$(jq -r ".${PLATFORM}.\"2fa_secret\" // empty" "$CREDS" 2>/dev/null)
+elif command -v python3 >/dev/null 2>&1; then
+    SECRET=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2],{}).get(\"2fa_secret\",\"\"))" "$CREDS" "$PLATFORM" 2>/dev/null)
+fi
+
+if [ -z "$SECRET" ]; then echo "No 2FA secret for $PLATFORM" >&2; exit 1; fi
+
+if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import pyotp,sys; print(pyotp.TOTP(sys.argv[1]).now())" "$SECRET"
+elif command -v python >/dev/null 2>&1; then
+    python -c "import pyotp,sys; print(pyotp.TOTP(sys.argv[1]).now())" "$SECRET"
+else
+    echo "Python with pyotp required for TOTP" >&2; exit 1
+fi'
+
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        local totp_script="/home/node/.openclaw/workspace/totp.sh"
+        echo "$totp_content" | docker exec -i -u node "$CONTAINER_NAME" bash -c "cat > $totp_script" 2>/dev/null
+        docker exec -u node "$CONTAINER_NAME" bash -c "chmod +x $totp_script" 2>/dev/null || true
+        log "  totp.sh deployed to container workspace"
+    else
+        local totp_script="${OPENCLAW_HOME}/workspace/totp.sh"
+        mkdir -p "$(dirname "$totp_script")"
+        echo "$totp_content" > "$totp_script"
+        chmod +x "$totp_script" 2>/dev/null || true
+        log "  totp.sh deployed to workspace"
+    fi
+
+    # ---- 4.6 Password generator script ----
+    log "  [Tools] Installing password generator script..."
+    local pwgen_content='#!/usr/bin/env bash
+# Generate secure random passwords
+# Usage: pwgen.sh [length] [--no-special]
+LENGTH="${1:-20}"
+NO_SPECIAL="${2:-}"
+if [ "$NO_SPECIAL" = "--no-special" ]; then
+    CHARS="A-Za-z0-9"
+else
+    CHARS="A-Za-z0-9!@#$%^&*()_+-="
+fi
+if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 48 | tr -dc "$CHARS" | head -c "$LENGTH"
+    echo
+elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "import secrets,string; chars=string.ascii_letters+string.digits+(\"\" if \"$NO_SPECIAL\" else \"!@#\$%^&*_+-\"); print(\"\".join(secrets.choice(chars) for _ in range(int(\"$LENGTH\"))))"
+else
+    head -c 100 /dev/urandom | tr -dc "$CHARS" | head -c "$LENGTH"
+    echo
+fi'
+
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        local pwgen_script="/home/node/.openclaw/workspace/pwgen.sh"
+        echo "$pwgen_content" | docker exec -i -u node "$CONTAINER_NAME" bash -c "cat > $pwgen_script" 2>/dev/null
+        docker exec -u node "$CONTAINER_NAME" bash -c "chmod +x $pwgen_script" 2>/dev/null || true
+        log "  pwgen.sh deployed to container workspace"
+    else
+        local pwgen_script="${OPENCLAW_HOME}/workspace/pwgen.sh"
+        echo "$pwgen_content" > "$pwgen_script"
+        chmod +x "$pwgen_script" 2>/dev/null || true
+        log "  pwgen.sh deployed to workspace"
+    fi
+
     # ---- 5. Image processing tools (ImageMagick / sharp) ----
     log "  [Tools] Checking image processing tools..."
     if [ "$INSTALL_MODE" = "docker" ]; then
@@ -1078,20 +1402,27 @@ SCREENSHOT_EOF
         fi
     fi
 
-    # ---- 6. Python packages for media processing ----
+    # ---- 6. Python packages (media + TOTP + email) ----
     log "  [Tools] Checking Python packages..."
     if [ "$INSTALL_MODE" = "docker" ]; then
         docker exec -u node "$CONTAINER_NAME" bash -c '
-            python3 -c "import PIL; import requests" 2>/dev/null && echo "OK" || {
-                pip3 install --user --break-system-packages Pillow requests 2>/dev/null || true
+            python3 -c "import PIL; import requests; import pyotp" 2>/dev/null && echo "OK" || {
+                pip3 install --user --break-system-packages Pillow requests pyotp 2>/dev/null || true
             }
         ' 2>/dev/null
-        log "  Python packages: Pillow + requests available"
+        log "  Python packages: Pillow + requests + pyotp available"
     else
         if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+            local py_cmd="python3"
+            command -v python3 >/dev/null 2>&1 || py_cmd="python"
+            # Install TOTP library for 2FA auto-handling
+            "$py_cmd" -c "import pyotp" 2>/dev/null || {
+                log "  Installing pyotp (2FA TOTP support)..."
+                "$py_cmd" -m pip install --user pyotp 2>/dev/null || warn "  pyotp install failed (optional)"
+            }
             log "  Python: available"
         else
-            warn "  Python not found (optional, for advanced media processing)"
+            warn "  Python not found (optional, for TOTP 2FA and media processing)"
         fi
     fi
 
@@ -1141,7 +1472,7 @@ SCREENSHOT_EOF
 # [4/7] Deploy credentials template
 # ============================================================================
 deploy_credentials() {
-    log "=== [4/7] Setting Up Credentials ==="
+    log "=== [5/10] Setting Up Credentials ==="
 
     if [ "$INSTALL_MODE" = "local" ]; then
         mkdir -p "${OPENCLAW_HOME}/sessions" "${OPENCLAW_HOME}/workspace"
@@ -1174,7 +1505,7 @@ deploy_credentials() {
 # [5/7] Reindex memory
 # ============================================================================
 reindex_memory() {
-    log "=== [5/7] Indexing Memory ==="
+    log "=== [6/10] Indexing Memory ==="
     if [ -n "$OC_BIN" ] || [ "$INSTALL_MODE" = "docker" ]; then
         oc_cmd memory index --force
         log "  Memory indexed (embedding warnings are normal without an embedding API key)"
@@ -1188,7 +1519,7 @@ reindex_memory() {
 # [6/7] Full restart of OpenClaw gateway to load new config
 # ============================================================================
 restart_gateway() {
-    log "=== [6/7] Full OpenClaw Restart ==="
+    log "=== [7/10] Full OpenClaw Restart ==="
 
     # --- DOCKER ---
     if [ "$INSTALL_MODE" = "docker" ]; then
@@ -1259,15 +1590,19 @@ restart_gateway() {
             if command -v fuser >/dev/null 2>&1; then
                 fuser -k "${gw_port}/tcp" 2>/dev/null || true
             elif command -v lsof >/dev/null 2>&1; then
-                lsof -ti :"$gw_port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+                local _pids
+                _pids=$(lsof -ti :"$gw_port" 2>/dev/null || true)
+                if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
             fi
             # Kill any openclaw gateway process
             pkill -f "openclaw.*gateway" 2>/dev/null || true
             ;;
         macos)
-            # Kill by port
+            # Kill by port (lsof on macOS)
             if command -v lsof >/dev/null 2>&1; then
-                lsof -ti :"$gw_port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+                local _pids
+                _pids=$(lsof -ti :"$gw_port" 2>/dev/null || true)
+                if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
             fi
             # Kill any openclaw gateway process
             pkill -f "openclaw.*gateway" 2>/dev/null || true
@@ -1424,7 +1759,7 @@ restart_gateway() {
 # [7/7] Verify
 # ============================================================================
 verify() {
-    log "=== [7/7] Verifying Installation ==="
+    log "=== [8/10] Verifying Installation ==="
 
     local ok=true
 
@@ -1507,6 +1842,26 @@ verify() {
             fi
         fi
 
+        # SOUL.md
+        if [ -f "${OPENCLAW_HOME}/workspace/SOUL.md" ]; then
+            log "  SOUL.md: DEPLOYED"
+        else
+            warn "  SOUL.md: NOT FOUND"
+        fi
+
+        # Heartbeat
+        if [ -n "$OC_BIN" ]; then
+            local hb_status
+            hb_status=$("$OC_BIN" config get heartbeat.enabled 2>/dev/null || echo "?")
+            if [ "$hb_status" = "true" ]; then
+                local hb_int
+                hb_int=$("$OC_BIN" config get heartbeat.intervalMinutes 2>/dev/null || echo "?")
+                log "  Heartbeat: ENABLED (every ${hb_int}m)"
+            else
+                log "  Heartbeat: DISABLED"
+            fi
+        fi
+
         # Directories
         [ -d "${OPENCLAW_HOME}/workspace" ] && log "  Workspace: OK" || warn "  Workspace: missing"
         [ -d "${OPENCLAW_HOME}/sessions" ] && log "  Sessions: OK" || warn "  Sessions: missing"
@@ -1537,6 +1892,10 @@ verify() {
         done
         docker exec "$CONTAINER_NAME" bash -c "test -x /home/node/.openclaw/workspace/screenshot.sh" 2>/dev/null \
             && log "  screenshot.sh: OK" || warn "  screenshot.sh: NOT FOUND"
+        docker exec "$CONTAINER_NAME" bash -c "test -x /home/node/.openclaw/workspace/totp.sh" 2>/dev/null \
+            && log "  totp.sh: OK" || warn "  totp.sh: NOT FOUND"
+        docker exec "$CONTAINER_NAME" bash -c "test -x /home/node/.openclaw/workspace/pwgen.sh" 2>/dev/null \
+            && log "  pwgen.sh: OK" || warn "  pwgen.sh: NOT FOUND"
     else
         for tool in ffmpeg curl jq; do
             if command -v "$tool" >/dev/null 2>&1; then
@@ -1552,6 +1911,10 @@ verify() {
         fi
         [ -f "${OPENCLAW_HOME}/workspace/screenshot.sh" ] \
             && log "  screenshot.sh: OK" || warn "  screenshot.sh: NOT FOUND"
+        [ -f "${OPENCLAW_HOME}/workspace/totp.sh" ] \
+            && log "  totp.sh: OK" || warn "  totp.sh: NOT FOUND"
+        [ -f "${OPENCLAW_HOME}/workspace/pwgen.sh" ] \
+            && log "  pwgen.sh: OK" || warn "  pwgen.sh: NOT FOUND"
     fi
     log "  ─── End Tools ───"
 
@@ -1617,65 +1980,88 @@ verify() {
 # ============================================================================
 print_summary() {
     echo ""
-    echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}  Content Engine — Installation Complete${NC}"
-    echo -e "${CYAN}============================================================${NC}"
+    printf '%b\n' "${CYAN}============================================================${NC}"
+    printf '%b\n' "${CYAN}  OpenClaw Fully Autonomous Agent — Installation Complete${NC}"
+    printf '%b\n' "${CYAN}============================================================${NC}"
     echo ""
     local mode_upper
     mode_upper=$(echo "$INSTALL_MODE" | tr '[:lower:]' '[:upper:]')
-    echo -e "  ${GREEN}Mode:${NC}  ${mode_upper} on ${OS_TYPE} (browser automation, no API keys)"
+    printf '%b\n' "  ${GREEN}Mode:${NC}     ${mode_upper} on ${OS_TYPE}"
+    printf '%b\n' "  ${GREEN}Agent:${NC}    ${AGENT_EMOJI} ${AGENT_NAME}"
+    if [ -n "$OWNER_NAME" ]; then
+        printf '%b\n' "  ${GREEN}Owner:${NC}    ${OWNER_NAME}"
+    fi
+    if [ -n "$CHANNEL_CONFIGS" ]; then
+        printf '%b\n' "  ${GREEN}Channels:${NC} ${CHANNEL_CONFIGS}"
+    fi
+    if [ "$ENABLE_HEARTBEAT" = "true" ]; then
+        printf '%b\n' "  ${GREEN}Heartbeat:${NC} every ${HEARTBEAT_INTERVAL} minutes"
+    fi
     echo ""
-    echo -e "  ${GREEN}Agent:${NC}  ${AGENT_EMOJI} ${AGENT_NAME}"
-    echo ""
-    echo -e "  ${GREEN}Installed:${NC}"
-    echo "    - Agent: ${AGENT_EMOJI} ${AGENT_NAME} (with IDENTITY.md)"
-    echo "    - 13 knowledge files (memory/content-engine/)"
+    printf '%b\n' "  ${GREEN}Installed:${NC}"
+    echo "    - Agent identity (IDENTITY.md + SOUL.md)"
+    echo "    - 16 knowledge files (content + autonomous ops + system control)"
     echo "    - content-engine skill (SKILL.md)"
-    echo "    - credentials.json template"
+    echo "    - credentials.json template (30+ platform slots)"
     echo ""
-    echo -e "  ${GREEN}Tools:${NC}"
-    echo "    - screenshot.sh         (active window + full screen capture)"
-    echo "    - FFmpeg                (video/audio merging, conversion)"
-    echo "    - Playwright Chromium   (headless browser for lobster)"
-    echo "    - ImageMagick           (image resize, convert, composite)"
-    echo "    - scrot + xdotool       (X11 screenshot + window control)"
-    echo "    - curl + wget           (asset download)"
-    echo "    - jq                    (JSON processing)"
-    echo "    - Python + Pillow       (image processing)"
+    printf '%b\n' "  ${GREEN}Tools:${NC}"
+    echo "    - screenshot.sh         (desktop/window capture)"
+    echo "    - totp.sh               (2FA code generation)"
+    echo "    - pwgen.sh              (secure password generation)"
+    echo "    - Playwright Chromium   (headless browser)"
+    echo "    - FFmpeg                (video/audio processing)"
+    echo "    - ImageMagick           (image processing)"
+    echo "    - pyotp                 (TOTP 2FA library)"
     echo ""
-    echo -e "  ${GREEN}Configured:${NC}"
-    echo "    - lobster plugin        (browser tool for agent)"
-    echo "    - llm-task plugin       (background task execution)"
-    echo "    - open-prose plugin     (text processing)"
-    echo "    - voice-call plugin     (audio capabilities)"
+    printf '%b\n' "  ${GREEN}Capabilities:${NC}"
+    echo "    - Browse any website, log in, interact"
+    echo "    - Create accounts on new platforms"
+    echo "    - Generate 2FA codes automatically"
+    echo "    - Control file system, apps, processes"
+    echo "    - Run scheduled background tasks"
+    echo "    - Multi-channel communication"
+    echo "    - Content creation and social publishing"
+    echo "    - Session persistence (cookies saved)"
+    echo ""
+    printf '%b\n' "  ${GREEN}Configured:${NC}"
     echo '    - tools.allow = ["*"]   (full tool access)'
-    echo "    - tools.elevated        (elevated from ALL channels)"
-    echo "    - exec timeout 30min    (long-running tasks)"
-    echo "    - sandbox = off         (browser + filesystem)"
+    echo "    - sandbox = off         (browser + filesystem + exec)"
     echo "    - 4 agents / 8 subs    (parallel execution)"
-    echo "    - workspace directory   (asset storage)"
+    echo "    - session persistence   (cookies auto-saved)"
+    echo "    - long-term memory      (auto-indexed)"
+    if [ "$ENABLE_HEARTBEAT" = "true" ]; then
+        echo "    - heartbeat scheduler   (every ${HEARTBEAT_INTERVAL}m)"
+    fi
+    if [ -n "$CHANNEL_CONFIGS" ]; then
+        echo "    - channels: ${CHANNEL_CONFIGS}"
+    fi
     echo ""
-
-    echo -e "  ${CYAN}Next Steps:${NC}"
+    printf '%b\n' "  ${CYAN}Next Steps:${NC}"
     echo ""
-    echo -e "    ${BOLD}1.${NC} Edit credentials.json with your platform logins"
+    printf '%b\n' "    ${BOLD}1.${NC} Edit credentials.json with your platform logins"
     if [ "$INSTALL_MODE" = "local" ]; then
-        echo "       ${OPENCLAW_HOME}/credentials.json"
+        printf '%b\n' "       ${YELLOW}${OPENCLAW_HOME}/credentials.json${NC}"
     else
-        echo "       docker exec -it ${CONTAINER_NAME} nano /home/node/.openclaw/credentials.json"
+        printf '%b\n' "       ${YELLOW}docker exec -it ${CONTAINER_NAME} nano /home/node/.openclaw/credentials.json${NC}"
     fi
     echo ""
-    echo -e "    ${BOLD}2.${NC} Restart the gateway to apply config"
-    if [ "$INSTALL_MODE" = "docker" ]; then
-        echo "       docker restart ${CONTAINER_NAME}"
+    printf '%b\n' "    ${BOLD}2.${NC} Customize SOUL.md with your goals and preferences"
+    if [ "$INSTALL_MODE" = "local" ]; then
+        printf '%b\n' "       ${YELLOW}${OPENCLAW_HOME}/workspace/SOUL.md${NC}"
     else
-        echo "       openclaw gateway stop && openclaw gateway"
+        printf '%b\n' "       ${YELLOW}docker exec -it ${CONTAINER_NAME} nano /home/node/.openclaw/workspace/SOUL.md${NC}"
     fi
     echo ""
-    echo -e "    ${BOLD}3.${NC} Test via Telegram:"
-    echo '       "Open the browser and go to chat.openai.com"'
+    printf '%b\n' "    ${BOLD}3.${NC} Configure channel tokens (Telegram bot token, Discord token, etc.)"
+    printf '%b\n' "       ${YELLOW}openclaw config set channels.telegram.token YOUR_TOKEN${NC}"
     echo ""
-    echo -e "${CYAN}============================================================${NC}"
+    printf '%b\n' "    ${BOLD}4.${NC} Test the agent:"
+    echo '       "Open the browser and go to google.com"'
+    echo '       "Create a new GitHub account"'
+    echo '       "Take a screenshot of the desktop"'
+    echo '       "What files are on my Desktop?"'
+    echo ""
+    printf '%b\n' "${CYAN}============================================================${NC}"
     echo ""
 }
 
@@ -1709,6 +2095,7 @@ main() {
     install_knowledge
     install_skill
     create_agent
+    deploy_soul
     configure_openclaw
     install_tools
     deploy_credentials

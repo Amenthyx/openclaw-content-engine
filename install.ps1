@@ -1,6 +1,7 @@
 # ============================================================================
-# Content Engine — Windows PowerShell Installer
-# Configures ALL OpenClaw plugins, tools, and settings for full autonomy
+# OpenClaw Fully Autonomous Agent — Windows PowerShell Installer
+# Sets up a fully autonomous agent with browser control, system access,
+# account creation, heartbeat scheduler, multi-channel gateway, and more.
 # Run: powershell -ExecutionPolicy Bypass -File install.ps1
 # ============================================================================
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,14 @@ $ContainerName = ""
 $OcBin = ""
 $AgentName = ""
 $AgentEmoji = ""
+$OwnerName = ""
+$AutonomyLevel = "1"
+$CommStyle = "concise"
+$WorkingHours = "24/7"
+$EnableHeartbeat = "true"
+$HeartbeatInterval = "15"
+$NotifyChannel = "telegram"
+$ChannelConfigs = @()
 
 # ============================================================================
 # Find openclaw binary
@@ -181,22 +190,90 @@ function Detect-Installations {
     else { Log "Mode: DOCKER -> $ContainerName" }
     Write-Host ""
 
-    # --- Agent name ---
+    # --- Agent Identity ---
     Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Agent Configuration"
+    Write-Host "  Agent Identity" -ForegroundColor White
     Write-Host ""
-    Write-Host "  The installer will create a dedicated content engine agent"
-    Write-Host "  with browser control and content creation capabilities."
+    Write-Host "  This installer sets up a fully autonomous agent that can:"
+    Write-Host "  - Browse the web, log in, create accounts"
+    Write-Host "  - Control your machine (files, apps, clipboard)"
+    Write-Host "  - Run scheduled tasks (heartbeat) 24/7"
+    Write-Host "  - Communicate across multiple channels"
+    Write-Host "  - Create content and publish to social media"
     Write-Host ""
-    $nameInput = Read-Host "  Agent name [ContentEngine]"
-    $script:AgentName = if ($nameInput) { $nameInput } else { "ContentEngine" }
+    $nameInput = Read-Host "  Agent name [OpenClaw]"
+    $script:AgentName = if ($nameInput) { $nameInput } else { "OpenClaw" }
 
-    $emojiInput = Read-Host "  Agent emoji [🎬]"
-    $script:AgentEmoji = if ($emojiInput) { $emojiInput } else { "🎬" }
+    $emojiInput = Read-Host "  Agent emoji [🤖]"
+    $script:AgentEmoji = if ($emojiInput) { $emojiInput } else { "🤖" }
+
+    $ownerInput = Read-Host "  Your name (agent's owner) []"
+    $script:OwnerName = $ownerInput
 
     Write-Host ""
     Log "Agent: $AgentEmoji $AgentName"
+    Write-Host ""
+
+    # --- Autonomy Level ---
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Autonomy Configuration" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  1) Full autonomy - act on everything, only ask for irreversible actions"
+    Write-Host "  2) Balanced - act on routine tasks, ask for new/unfamiliar ones"
+    Write-Host "  3) Conservative - always ask before taking action"
+    Write-Host ""
+    $autoInput = Read-Host "  Autonomy level [1/2/3] [1]"
+    $script:AutonomyLevel = if ($autoInput) { $autoInput } else { "1" }
+
+    $styleInput = Read-Host "  Communication style [concise/detailed/casual] [concise]"
+    $script:CommStyle = if ($styleInput) { $styleInput } else { "concise" }
+
+    $hoursInput = Read-Host "  Working hours [24/7 / business / custom] [24/7]"
+    $script:WorkingHours = if ($hoursInput) { $hoursInput } else { "24/7" }
+    Write-Host ""
+
+    # --- Heartbeat Scheduler ---
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Heartbeat Scheduler" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  The heartbeat wakes the agent at intervals to run"
+    Write-Host "  background tasks (monitoring, scheduled posts, inbox checks)."
+    Write-Host ""
+    $hbInput = Read-Host "  Enable heartbeat? [Y/n]"
+    if ($hbInput -match '^[nN]') {
+        $script:EnableHeartbeat = "false"
+    } else {
+        $script:EnableHeartbeat = "true"
+        $hbInt = Read-Host "  Heartbeat interval (minutes) [15]"
+        $script:HeartbeatInterval = if ($hbInt) { $hbInt } else { "15" }
+        Log "  Heartbeat: every $HeartbeatInterval minutes"
+    }
+    Write-Host ""
+
+    # --- Multi-Channel Gateway ---
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Communication Channels" -ForegroundColor White
+    Write-Host ""
+    $script:ChannelConfigs = @()
+    foreach ($ch in @("telegram", "discord", "whatsapp", "slack", "signal")) {
+        $chInput = Read-Host "  Enable ${ch}? [Y/n]"
+        if ($chInput -notmatch '^[nN]') {
+            $script:ChannelConfigs += $ch
+        }
+    }
+    Write-Host ""
+    if ($ChannelConfigs.Count -gt 0) {
+        Log "  Channels: $($ChannelConfigs -join ', ')"
+    } else {
+        Log "  Channels: none (configure later)"
+    }
+
+    $notifyInput = Read-Host "  Primary notification channel [telegram]"
+    $script:NotifyChannel = if ($notifyInput) { $notifyInput } else { "telegram" }
     Write-Host ""
 }
 
@@ -204,7 +281,7 @@ function Detect-Installations {
 # [1/7] Install knowledge
 # ============================================================================
 function Install-Knowledge {
-    Log "=== [1/7] Installing Knowledge Base ==="
+    Log "=== [1/10] Installing Knowledge Base ==="
     $files = Get-ChildItem -Path $KnowledgeDir -Filter "*.md"
 
     if ($InstallMode -eq "local") {
@@ -227,7 +304,7 @@ function Install-Knowledge {
 # [2/7] Install skill
 # ============================================================================
 function Install-Skill {
-    Log "=== [2/7] Installing Skill ==="
+    Log "=== [2/10] Installing Skill ==="
     $skillFile = Join-Path $SkillDir "SKILL.md"
 
     if ($InstallMode -eq "local") {
@@ -250,7 +327,7 @@ function Install-Skill {
 # [2.5/7] Set up the default agent with browser + content identity
 # ============================================================================
 function Create-Agent {
-    Log "=== [2.5/7] Setting Up Agent: $AgentEmoji $AgentName ==="
+    Log "=== [2.5/10] Setting Up Agent: $AgentEmoji $AgentName ==="
 
     $identitySrc = Join-Path $ScriptDir "IDENTITY.md"
     if (-not (Test-Path $identitySrc)) {
@@ -315,10 +392,55 @@ function Create-Agent {
 }
 
 # ============================================================================
-# [3/7] Configure OpenClaw
+# [2.7/10] Deploy SOUL.md
+# ============================================================================
+function Deploy-Soul {
+    Log "=== [2.7/10] Deploying SOUL.md (Agent Personality & Goals) ==="
+
+    $soulSrc = Join-Path $ScriptDir "SOUL.md"
+    if (-not (Test-Path $soulSrc)) {
+        Warn "  SOUL.md template not found - skipping"
+        return
+    }
+
+    $soulContent = (Get-Content $soulSrc -Raw)
+    $soulContent = $soulContent -replace '\[Your name\]', $(if ($OwnerName) { $OwnerName } else { "Not set" })
+    $soulContent = $soulContent -replace '\[concise/detailed/casual/formal\]', $CommStyle
+    $soulContent = $soulContent -replace '\[24/7 / business hours only / custom schedule\]', $WorkingHours
+    $soulContent = $soulContent -replace '\[Telegram / Discord / Slack / all\]', $NotifyChannel
+
+    $autonomyText = "Act autonomously on all routine tasks. Only ask for irreversible or high-risk actions."
+    if ($AutonomyLevel -eq "2") { $autonomyText = "Act on routine/familiar tasks. Ask before attempting new or unfamiliar operations." }
+    if ($AutonomyLevel -eq "3") { $autonomyText = "Always ask before taking any action. Provide recommendations but wait for approval." }
+    $soulContent = $soulContent -replace '24/7 autonomous with human oversight for critical decisions', $autonomyText
+
+    if ($InstallMode -eq "local") {
+        $ws = Join-Path $OpenClawHome "workspace"
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $dest = Join-Path $ws "SOUL.md"
+        if (Test-Path $dest) {
+            Copy-Item $dest -Destination "$dest.bak" -Force
+            Log "  Backed up existing SOUL.md"
+        }
+        $soulContent | Set-Content -Path $dest -Encoding UTF8
+        Log "  SOUL.md deployed to $ws/"
+    } else {
+        $dockerWs = "/home/node/.openclaw/workspace"
+        docker exec $ContainerName bash -c "mkdir -p $dockerWs" 2>$null
+        $tmpFile = [System.IO.Path]::GetTempFileName()
+        $soulContent | Set-Content -Path $tmpFile -Encoding UTF8
+        docker cp $tmpFile "${ContainerName}:$dockerWs/SOUL.md"
+        docker exec $ContainerName bash -c "chown node:node $dockerWs/SOUL.md" 2>$null
+        Remove-Item $tmpFile -Force
+        Log "  SOUL.md deployed to container workspace"
+    }
+}
+
+# ============================================================================
+# [3/10] Configure OpenClaw
 # ============================================================================
 function Configure-OpenClaw {
-    Log "=== [3/7] Configuring OpenClaw for Full Autonomy ==="
+    Log "=== [3/10] Configuring OpenClaw for Full Autonomy ==="
 
     if ($InstallMode -eq "local" -and -not $OcBin) {
         Warn "  openclaw CLI not found — writing config via JSON"
@@ -352,7 +474,22 @@ function Configure-OpenClaw {
         # Skills
         @("skills.install.nodeManager", "npm", "node manager"),
         # Messages
-        @("messages.ackReactionScope", "group-mentions", "ack reactions")
+        @("messages.ackReactionScope", "group-mentions", "ack reactions"),
+        # Session persistence
+        @("browser.persistSessions", "true", "session persistence"),
+        @("browser.cookieStorage", "file", "cookie storage"),
+        @("sessions.autoSave", "true", "auto-save sessions"),
+        @("sessions.maxAge", "30d", "session max age"),
+        # Autonomy capabilities
+        @("tools.filesystem.enabled", "true", "filesystem access"),
+        @("tools.clipboard.enabled", "true", "clipboard access"),
+        @("tools.process.enabled", "true", "process management"),
+        @("tools.network.enabled", "true", "network access"),
+        @("tools.credentials.autoSave", "true", "credential auto-save"),
+        @("memory.longTerm.enabled", "true", "long-term memory"),
+        @("memory.longTerm.autoIndex", "true", "memory auto-index"),
+        @("agents.defaults.canSpawn", "true", "agent spawning"),
+        @("agents.defaults.canDelegate", "true", "agent delegation")
     )
 
     foreach ($s in $settings) {
@@ -364,6 +501,31 @@ function Configure-OpenClaw {
         $ws = (Join-Path $OpenClawHome "workspace").Replace("\", "/")
         Log "  workspace..."
         Oc-Config -Args @("set", "agents.defaults.workspace", $ws)
+    }
+
+    # Heartbeat scheduler
+    if ($EnableHeartbeat -eq "true") {
+        Log "  Configuring heartbeat scheduler..."
+        Oc-Config -Args @("set", "heartbeat.enabled", "true")
+        Oc-Config -Args @("set", "heartbeat.intervalMinutes", $HeartbeatInterval)
+        Oc-Config -Args @("set", "heartbeat.tasks.checkInbox", "true")
+        Oc-Config -Args @("set", "heartbeat.tasks.monitorApps", "true")
+        Oc-Config -Args @("set", "heartbeat.tasks.scheduledContent", "true")
+        Oc-Config -Args @("set", "heartbeat.tasks.healthCheck", "true")
+    }
+
+    # Multi-channel gateway
+    foreach ($ch in $ChannelConfigs) {
+        Log "  Enabling channel: $ch..."
+        Oc-Config -Args @("set", "channels.$ch.enabled", "true")
+        Oc-Config -Args @("set", "tools.elevated.allowFrom.$ch", '["*"]')
+    }
+
+    # Notification preferences
+    if ($NotifyChannel) {
+        Oc-Config -Args @("set", "notifications.defaultChannel", $NotifyChannel)
+        Oc-Config -Args @("set", "notifications.onTaskComplete", "true")
+        Oc-Config -Args @("set", "notifications.onError", "true")
     }
 
     # Install lobster plugin (provides the browser tool)
@@ -493,7 +655,7 @@ with open(path, "w") as f:
 # [4/7] Credentials
 # ============================================================================
 function Deploy-Credentials {
-    Log "=== [4/7] Setting Up Credentials ==="
+    Log "=== [5/10] Setting Up Credentials ==="
 
     if ($InstallMode -eq "local") {
         New-Item -ItemType Directory -Path (Join-Path $OpenClawHome "sessions") -Force | Out-Null
@@ -525,7 +687,7 @@ function Deploy-Credentials {
 # [5/7] Reindex memory
 # ============================================================================
 function Reindex-Memory {
-    Log "=== [5/7] Indexing Memory ==="
+    Log "=== [6/10] Indexing Memory ==="
     if ($OcBin -or $InstallMode -eq "docker") {
         Oc-Cmd -Args @("memory", "index", "--force")
         Log "  Memory indexed"
@@ -538,7 +700,7 @@ function Reindex-Memory {
 # [6/7] Full restart of OpenClaw gateway to load new config
 # ============================================================================
 function Restart-Gateway {
-    Log "=== [6/7] Full OpenClaw Restart ==="
+    Log "=== [7/10] Full OpenClaw Restart ==="
 
     if ($InstallMode -eq "docker") {
         Log "  Stopping container $ContainerName..."
@@ -675,7 +837,7 @@ function Restart-Gateway {
 # [7/7] Verify
 # ============================================================================
 function Verify-Install {
-    Log "=== [7/7] Verifying Installation ==="
+    Log "=== [8/10] Verifying Installation ==="
 
     if ($InstallMode -eq "local") {
         $kDir = Join-Path $OpenClawHome "memory\content-engine"
@@ -715,40 +877,53 @@ function Verify-Install {
 function Print-Summary {
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  Content Engine — Installation Complete" -ForegroundColor Cyan
+    Write-Host "  OpenClaw Fully Autonomous Agent — Installation Complete" -ForegroundColor Cyan
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Mode: $($InstallMode.ToUpper()) on Windows (browser automation, no API keys)" -ForegroundColor Green
+    Write-Host "  Mode:     $($InstallMode.ToUpper()) on Windows" -ForegroundColor Green
+    Write-Host "  Agent:    $AgentEmoji $AgentName" -ForegroundColor Green
+    if ($OwnerName) { Write-Host "  Owner:    $OwnerName" -ForegroundColor Green }
+    if ($ChannelConfigs.Count -gt 0) { Write-Host "  Channels: $($ChannelConfigs -join ', ')" -ForegroundColor Green }
+    if ($EnableHeartbeat -eq "true") { Write-Host "  Heartbeat: every $HeartbeatInterval minutes" -ForegroundColor Green }
     Write-Host ""
     Write-Host "  Installed:" -ForegroundColor Green
-    Write-Host "    - 13 knowledge files"
+    Write-Host "    - Agent identity (IDENTITY.md + SOUL.md)"
+    Write-Host "    - 16 knowledge files (content + autonomous ops + system control)"
     Write-Host "    - content-engine skill"
-    Write-Host "    - credentials.json template"
+    Write-Host "    - credentials.json template (30+ platform slots)"
     Write-Host ""
-    Write-Host "  Configured:" -ForegroundColor Green
-    Write-Host '    - lobster plugin        (browser tool)'
-    Write-Host '    - llm-task plugin       (background tasks)'
-    Write-Host '    - tools.allow = ["*"]   (full access)'
-    Write-Host '    - sandbox = off         (browser + filesystem)'
-    Write-Host '    - 4 agents / 8 subs    (parallel execution)'
+    Write-Host "  Capabilities:" -ForegroundColor Green
+    Write-Host "    - Browse any website, log in, interact"
+    Write-Host "    - Create accounts on new platforms"
+    Write-Host "    - Generate 2FA codes automatically"
+    Write-Host "    - Control file system, apps, processes"
+    Write-Host "    - Run scheduled background tasks"
+    Write-Host "    - Multi-channel communication"
+    Write-Host "    - Content creation and social publishing"
+    Write-Host "    - Session persistence (cookies saved)"
     Write-Host ""
     Write-Host "  Next Steps:" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "    1. Edit credentials.json with your logins"
+    Write-Host "    1. Edit credentials.json with your platform logins"
     if ($InstallMode -eq "local") {
         Write-Host "       $OpenClawHome\credentials.json" -ForegroundColor Yellow
     } else {
         Write-Host "       docker exec -it $ContainerName nano /home/node/.openclaw/credentials.json" -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host "    2. Restart the gateway"
-    if ($InstallMode -eq "docker") {
-        Write-Host "       docker restart $ContainerName" -ForegroundColor Yellow
+    Write-Host "    2. Customize SOUL.md with your goals and preferences"
+    if ($InstallMode -eq "local") {
+        Write-Host "       $OpenClawHome\workspace\SOUL.md" -ForegroundColor Yellow
     } else {
-        Write-Host "       openclaw gateway stop; openclaw gateway" -ForegroundColor Yellow
+        Write-Host "       docker exec -it $ContainerName nano /home/node/.openclaw/workspace/SOUL.md" -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host '    3. Test via Telegram: "Open the browser and go to chat.openai.com"'
+    Write-Host "    3. Configure channel tokens"
+    Write-Host "       openclaw config set channels.telegram.token YOUR_TOKEN" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host '    4. Test: "Open the browser and go to google.com"'
+    Write-Host '       "Create a new GitHub account"'
+    Write-Host '       "Take a screenshot of the desktop"'
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
@@ -780,6 +955,7 @@ function Main {
     Install-Knowledge
     Install-Skill
     Create-Agent
+    Deploy-Soul
     Configure-OpenClaw
     Deploy-Credentials
     Reindex-Memory
