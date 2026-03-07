@@ -832,18 +832,32 @@ configure_via_cli() {
     oc_cmd browser setup 2>/dev/null || true
     oc_cmd browser install 2>/dev/null || true
 
-    # --- TOOLS: FULL ACCESS ---
-    log "  [Tools] Allowing ALL tools for ALL channels..."
+    # --- TOOLS: FULL ACCESS (ALL PERMISSIONS GRANTED) ---
+    log "  [Tools] Granting ALL permissions for ALL tools on ALL channels..."
     oc_config set tools.allow '["*"]'
 
-    # Elevated tools — allow from ALL channels (telegram, discord, etc.)
+    # Elevated tools — allow from ALL channels
     oc_config set tools.elevated.enabled true
     oc_config set tools.elevated.allowFrom.telegram '["*"]'
     oc_config set tools.elevated.allowFrom.discord '["*"]'
+    oc_config set tools.elevated.allowFrom.whatsapp '["*"]'
+    oc_config set tools.elevated.allowFrom.slack '["*"]'
+    oc_config set tools.elevated.allowFrom.signal '["*"]'
+    oc_config set tools.elevated.allowFrom.web '["*"]'
+    oc_config set tools.elevated.allowFrom.api '["*"]'
 
-    # Exec tool — 30min timeout for long-running tasks (FFmpeg, downloads)
+    # Browser tool — explicitly enabled
+    oc_config set tools.browser.enabled true
+    oc_config set tools.browser.allowNavigation true
+    oc_config set tools.browser.allowDownloads true
+    oc_config set tools.browser.allowUploads true
+    oc_config set tools.browser.allowScreenshots true
+
+    # Exec tool — explicitly enabled, 30min timeout for long tasks
+    oc_config set tools.exec.enabled true
     oc_config set tools.exec.timeoutSec 1800
     oc_config set tools.exec.notifyOnExit true
+    oc_config set tools.exec.allowAll true
 
     # --- AGENT DEFAULTS ---
     log "  [Agent] Setting defaults (sandbox off, concurrency, compaction)..."
@@ -913,25 +927,39 @@ configure_via_cli() {
         oc_config set notifications.onHeartbeat false
     fi
 
-    # --- AUTONOMOUS AGENT CAPABILITIES ---
-    log "  [Autonomy] Enabling full agent capabilities..."
-    # File system access
+    # --- AUTONOMOUS AGENT CAPABILITIES (ALL PERMISSIONS) ---
+    log "  [Autonomy] Granting ALL autonomous capabilities..."
+    # File system — full read/write/delete access
     oc_config set tools.filesystem.enabled true
     oc_config set tools.filesystem.allowWrite true
+    oc_config set tools.filesystem.allowDelete true
+    oc_config set tools.filesystem.allowCreate true
     # Clipboard access
     oc_config set tools.clipboard.enabled true
+    oc_config set tools.clipboard.allowRead true
+    oc_config set tools.clipboard.allowWrite true
     # Process management
     oc_config set tools.process.enabled true
-    # Network access
+    oc_config set tools.process.allowKill true
+    oc_config set tools.process.allowSpawn true
+    # Network access — unrestricted
     oc_config set tools.network.enabled true
+    oc_config set tools.network.allowAll true
     # Account/credential management
+    oc_config set tools.credentials.enabled true
     oc_config set tools.credentials.autoSave true
+    oc_config set tools.credentials.allowRead true
+    oc_config set tools.credentials.allowWrite true
     # Memory — long-term retention
     oc_config set memory.longTerm.enabled true
     oc_config set memory.longTerm.autoIndex true
     # Sub-agent spawning for complex tasks
     oc_config set agents.defaults.canSpawn true
     oc_config set agents.defaults.canDelegate true
+    # Permissions — global override: grant all
+    oc_config set permissions.mode unrestricted
+    oc_config set permissions.autoApprove true
+    oc_config set permissions.requireConfirmation false
 
     # --- VERIFY BROWSER TOOL ---
     log "  [Browser] Verifying browser tool availability..."
@@ -971,11 +999,35 @@ cfg.tools.allow = ['*'];
 if (!cfg.tools.elevated) cfg.tools.elevated = {};
 cfg.tools.elevated.enabled = true;
 if (!cfg.tools.elevated.allowFrom) cfg.tools.elevated.allowFrom = {};
-cfg.tools.elevated.allowFrom.telegram = ['*'];
-cfg.tools.elevated.allowFrom.discord = ['*'];
+['telegram','discord','whatsapp','slack','signal','web','api'].forEach(function(ch) { cfg.tools.elevated.allowFrom[ch] = ['*']; });
+if (!cfg.tools.browser) cfg.tools.browser = {};
+cfg.tools.browser.enabled = true;
+cfg.tools.browser.allowNavigation = true;
+cfg.tools.browser.allowDownloads = true;
+cfg.tools.browser.allowUploads = true;
+cfg.tools.browser.allowScreenshots = true;
 if (!cfg.tools.exec) cfg.tools.exec = {};
+cfg.tools.exec.enabled = true;
 cfg.tools.exec.timeoutSec = 1800;
 cfg.tools.exec.notifyOnExit = true;
+cfg.tools.exec.allowAll = true;
+if (!cfg.tools.filesystem) cfg.tools.filesystem = {};
+cfg.tools.filesystem.enabled = true;
+cfg.tools.filesystem.allowWrite = true;
+cfg.tools.filesystem.allowDelete = true;
+cfg.tools.filesystem.allowCreate = true;
+if (!cfg.tools.clipboard) cfg.tools.clipboard = {};
+cfg.tools.clipboard = { enabled: true, allowRead: true, allowWrite: true };
+if (!cfg.tools.process) cfg.tools.process = {};
+cfg.tools.process = { enabled: true, allowKill: true, allowSpawn: true };
+if (!cfg.tools.network) cfg.tools.network = {};
+cfg.tools.network = { enabled: true, allowAll: true };
+if (!cfg.tools.credentials) cfg.tools.credentials = {};
+cfg.tools.credentials = { enabled: true, autoSave: true, allowRead: true, allowWrite: true };
+if (!cfg.permissions) cfg.permissions = {};
+cfg.permissions.mode = 'unrestricted';
+cfg.permissions.autoApprove = true;
+cfg.permissions.requireConfirmation = false;
 if (!cfg.messages) cfg.messages = {};
 cfg.messages.ackReactionScope = 'group-mentions';
 if (!cfg.agents) cfg.agents = {};
@@ -985,6 +1037,8 @@ cfg.agents.defaults.maxConcurrent = 4;
 cfg.agents.defaults.subagents = { maxConcurrent: 8 };
 cfg.agents.defaults.compaction = { mode: 'safeguard' };
 cfg.agents.defaults.workspace = process.argv[2];
+cfg.agents.defaults.canSpawn = true;
+cfg.agents.defaults.canDelegate = true;
 if (!cfg.commands) cfg.commands = {};
 cfg.commands.native = 'auto';
 cfg.commands.nativeSkills = 'auto';
@@ -1007,8 +1061,6 @@ cfg.notifications.onTaskComplete = true;
 cfg.notifications.onError = true;
 if (!cfg.memory) cfg.memory = {};
 cfg.memory.longTerm = { enabled: true, autoIndex: true };
-cfg.agents.defaults.canSpawn = true;
-cfg.agents.defaults.canDelegate = true;
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
 " "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" 2>&1 && log "  Config written" || err "  Node.js config write failed"
 
@@ -1033,17 +1085,28 @@ cfg.setdefault("tools", {})
 cfg["tools"]["allow"] = ["*"]
 cfg["tools"].setdefault("elevated", {})["enabled"] = True
 cfg["tools"].setdefault("elevated", {}).setdefault("allowFrom", {})
-cfg["tools"]["elevated"]["allowFrom"]["telegram"] = ["*"]
-cfg["tools"]["elevated"]["allowFrom"]["discord"] = ["*"]
+for ch in ["telegram","discord","whatsapp","slack","signal","web","api"]:
+    cfg["tools"]["elevated"]["allowFrom"][ch] = ["*"]
+cfg["tools"]["browser"] = {"enabled": True, "allowNavigation": True, "allowDownloads": True, "allowUploads": True, "allowScreenshots": True}
 cfg["tools"].setdefault("exec", {})
+cfg["tools"]["exec"]["enabled"] = True
 cfg["tools"]["exec"]["timeoutSec"] = 1800
 cfg["tools"]["exec"]["notifyOnExit"] = True
+cfg["tools"]["exec"]["allowAll"] = True
+cfg["tools"]["filesystem"] = {"enabled": True, "allowWrite": True, "allowDelete": True, "allowCreate": True}
+cfg["tools"]["clipboard"] = {"enabled": True, "allowRead": True, "allowWrite": True}
+cfg["tools"]["process"] = {"enabled": True, "allowKill": True, "allowSpawn": True}
+cfg["tools"]["network"] = {"enabled": True, "allowAll": True}
+cfg["tools"]["credentials"] = {"enabled": True, "autoSave": True, "allowRead": True, "allowWrite": True}
+cfg["permissions"] = {"mode": "unrestricted", "autoApprove": True, "requireConfirmation": False}
 cfg.setdefault("agents", {}).setdefault("defaults", {})
 cfg["agents"]["defaults"]["sandbox"] = {"mode": "off"}
 cfg["agents"]["defaults"]["maxConcurrent"] = 4
 cfg["agents"]["defaults"]["subagents"] = {"maxConcurrent": 8}
 cfg["agents"]["defaults"]["compaction"] = {"mode": "safeguard"}
 cfg["agents"]["defaults"]["workspace"] = ws
+cfg["agents"]["defaults"]["canSpawn"] = True
+cfg["agents"]["defaults"]["canDelegate"] = True
 cfg.setdefault("commands", {})
 cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
@@ -1068,7 +1131,6 @@ cfg["notifications"]["onTaskComplete"] = True
 cfg["notifications"]["onError"] = True
 cfg.setdefault("memory", {})
 cfg["memory"]["longTerm"] = {"enabled": True, "autoIndex": True}
-cfg["agents"]["defaults"]["canSpawn"] = True
 cfg["agents"]["defaults"]["canDelegate"] = True
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)

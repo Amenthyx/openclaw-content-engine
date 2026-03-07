@@ -456,13 +456,27 @@ function Configure-OpenClaw {
         @("plugins.entries.voice-call.enabled", "true", "voice-call (audio)"),
         # Browser
         @("browser.defaultProfile", "openclaw", "browser default profile (headless)"),
-        # Tools — full access for all channels
+        # Tools — ALL permissions granted for ALL channels
         @("tools.allow", '["*"]', "allow ALL tools"),
         @("tools.elevated.enabled", "true", "elevated tools"),
         @("tools.elevated.allowFrom.telegram", '["*"]', "elevated from telegram"),
         @("tools.elevated.allowFrom.discord", '["*"]', "elevated from discord"),
+        @("tools.elevated.allowFrom.whatsapp", '["*"]', "elevated from whatsapp"),
+        @("tools.elevated.allowFrom.slack", '["*"]', "elevated from slack"),
+        @("tools.elevated.allowFrom.signal", '["*"]', "elevated from signal"),
+        @("tools.elevated.allowFrom.web", '["*"]', "elevated from web"),
+        @("tools.elevated.allowFrom.api", '["*"]', "elevated from api"),
+        # Browser — full access
+        @("tools.browser.enabled", "true", "browser enabled"),
+        @("tools.browser.allowNavigation", "true", "browser navigation"),
+        @("tools.browser.allowDownloads", "true", "browser downloads"),
+        @("tools.browser.allowUploads", "true", "browser uploads"),
+        @("tools.browser.allowScreenshots", "true", "browser screenshots"),
+        # Exec — full access
+        @("tools.exec.enabled", "true", "exec enabled"),
         @("tools.exec.timeoutSec", "1800", "exec timeout 30min"),
         @("tools.exec.notifyOnExit", "true", "exec notify"),
+        @("tools.exec.allowAll", "true", "exec allow all"),
         # Agent defaults
         @("agents.defaults.sandbox.mode", "off", "sandbox off"),
         @("agents.defaults.maxConcurrent", "4", "max agents"),
@@ -480,16 +494,31 @@ function Configure-OpenClaw {
         @("browser.cookieStorage", "file", "cookie storage"),
         @("sessions.autoSave", "true", "auto-save sessions"),
         @("sessions.maxAge", "30d", "session max age"),
-        # Autonomy capabilities
+        # Autonomy — ALL permissions granted
         @("tools.filesystem.enabled", "true", "filesystem access"),
+        @("tools.filesystem.allowWrite", "true", "filesystem write"),
+        @("tools.filesystem.allowDelete", "true", "filesystem delete"),
+        @("tools.filesystem.allowCreate", "true", "filesystem create"),
         @("tools.clipboard.enabled", "true", "clipboard access"),
+        @("tools.clipboard.allowRead", "true", "clipboard read"),
+        @("tools.clipboard.allowWrite", "true", "clipboard write"),
         @("tools.process.enabled", "true", "process management"),
+        @("tools.process.allowKill", "true", "process kill"),
+        @("tools.process.allowSpawn", "true", "process spawn"),
         @("tools.network.enabled", "true", "network access"),
+        @("tools.network.allowAll", "true", "network unrestricted"),
+        @("tools.credentials.enabled", "true", "credentials enabled"),
         @("tools.credentials.autoSave", "true", "credential auto-save"),
+        @("tools.credentials.allowRead", "true", "credential read"),
+        @("tools.credentials.allowWrite", "true", "credential write"),
         @("memory.longTerm.enabled", "true", "long-term memory"),
         @("memory.longTerm.autoIndex", "true", "memory auto-index"),
         @("agents.defaults.canSpawn", "true", "agent spawning"),
-        @("agents.defaults.canDelegate", "true", "agent delegation")
+        @("agents.defaults.canDelegate", "true", "agent delegation"),
+        # Global permissions override
+        @("permissions.mode", "unrestricted", "unrestricted permissions"),
+        @("permissions.autoApprove", "true", "auto-approve all"),
+        @("permissions.requireConfirmation", "false", "no confirmation needed")
     )
 
     foreach ($s in $settings) {
@@ -570,11 +599,16 @@ cfg.tools.allow = ['*'];
 if (!cfg.tools.elevated) cfg.tools.elevated = {};
 cfg.tools.elevated.enabled = true;
 if (!cfg.tools.elevated.allowFrom) cfg.tools.elevated.allowFrom = {};
-cfg.tools.elevated.allowFrom.telegram = ['*'];
-cfg.tools.elevated.allowFrom.discord = ['*'];
+['telegram','discord','whatsapp','slack','signal','web','api'].forEach(function(ch) { cfg.tools.elevated.allowFrom[ch] = ['*']; });
+cfg.tools.browser = { enabled: true, allowNavigation: true, allowDownloads: true, allowUploads: true, allowScreenshots: true };
 if (!cfg.tools.exec) cfg.tools.exec = {};
-cfg.tools.exec.timeoutSec = 1800;
-cfg.tools.exec.notifyOnExit = true;
+cfg.tools.exec = { enabled: true, timeoutSec: 1800, notifyOnExit: true, allowAll: true };
+cfg.tools.filesystem = { enabled: true, allowWrite: true, allowDelete: true, allowCreate: true };
+cfg.tools.clipboard = { enabled: true, allowRead: true, allowWrite: true };
+cfg.tools.process = { enabled: true, allowKill: true, allowSpawn: true };
+cfg.tools.network = { enabled: true, allowAll: true };
+cfg.tools.credentials = { enabled: true, autoSave: true, allowRead: true, allowWrite: true };
+cfg.permissions = { mode: 'unrestricted', autoApprove: true, requireConfirmation: false };
 if (!cfg.messages) cfg.messages = {};
 cfg.messages.ackReactionScope = 'group-mentions';
 if (!cfg.agents) cfg.agents = {};
@@ -584,11 +618,22 @@ cfg.agents.defaults.maxConcurrent = 4;
 cfg.agents.defaults.subagents = { maxConcurrent: 8 };
 cfg.agents.defaults.compaction = { mode: 'safeguard' };
 cfg.agents.defaults.workspace = ws;
+cfg.agents.defaults.canSpawn = true;
+cfg.agents.defaults.canDelegate = true;
 if (!cfg.commands) cfg.commands = {};
 cfg.commands.native = 'auto';
 cfg.commands.nativeSkills = 'auto';
 if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
+if (!cfg.browser) cfg.browser = {};
+cfg.browser.defaultProfile = 'openclaw';
+cfg.browser.persistSessions = true;
+cfg.browser.cookieStorage = 'file';
+if (!cfg.sessions) cfg.sessions = {};
+cfg.sessions.autoSave = true;
+cfg.sessions.maxAge = '30d';
+if (!cfg.memory) cfg.memory = {};
+cfg.memory.longTerm = { enabled: true, autoIndex: true };
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
 "@
         node -e $nodeScript $configFile $ws
@@ -618,11 +663,16 @@ cfg.setdefault("tools", {})
 cfg["tools"]["allow"] = ["*"]
 cfg["tools"].setdefault("elevated", {})["enabled"] = True
 cfg["tools"].setdefault("elevated", {}).setdefault("allowFrom", {})
-cfg["tools"]["elevated"]["allowFrom"]["telegram"] = ["*"]
-cfg["tools"]["elevated"]["allowFrom"]["discord"] = ["*"]
-cfg["tools"].setdefault("exec", {})
-cfg["tools"]["exec"]["timeoutSec"] = 1800
-cfg["tools"]["exec"]["notifyOnExit"] = True
+for ch in ["telegram","discord","whatsapp","slack","signal","web","api"]:
+    cfg["tools"]["elevated"]["allowFrom"][ch] = ["*"]
+cfg["tools"]["browser"] = {"enabled": True, "allowNavigation": True, "allowDownloads": True, "allowUploads": True, "allowScreenshots": True}
+cfg["tools"]["exec"] = {"enabled": True, "timeoutSec": 1800, "notifyOnExit": True, "allowAll": True}
+cfg["tools"]["filesystem"] = {"enabled": True, "allowWrite": True, "allowDelete": True, "allowCreate": True}
+cfg["tools"]["clipboard"] = {"enabled": True, "allowRead": True, "allowWrite": True}
+cfg["tools"]["process"] = {"enabled": True, "allowKill": True, "allowSpawn": True}
+cfg["tools"]["network"] = {"enabled": True, "allowAll": True}
+cfg["tools"]["credentials"] = {"enabled": True, "autoSave": True, "allowRead": True, "allowWrite": True}
+cfg["permissions"] = {"mode": "unrestricted", "autoApprove": True, "requireConfirmation": False}
 cfg.setdefault("messages", {})
 cfg["messages"]["ackReactionScope"] = "group-mentions"
 cfg.setdefault("agents", {}).setdefault("defaults", {})
@@ -631,6 +681,8 @@ cfg["agents"]["defaults"]["maxConcurrent"] = 4
 cfg["agents"]["defaults"]["subagents"] = {"maxConcurrent": 8}
 cfg["agents"]["defaults"]["compaction"] = {"mode": "safeguard"}
 cfg["agents"]["defaults"]["workspace"] = ws
+cfg["agents"]["defaults"]["canSpawn"] = True
+cfg["agents"]["defaults"]["canDelegate"] = True
 cfg.setdefault("commands", {})
 cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
@@ -638,6 +690,13 @@ cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
+cfg["browser"]["persistSessions"] = True
+cfg["browser"]["cookieStorage"] = "file"
+cfg.setdefault("sessions", {})
+cfg["sessions"]["autoSave"] = True
+cfg["sessions"]["maxAge"] = "30d"
+cfg.setdefault("memory", {})
+cfg["memory"]["longTerm"] = {"enabled": True, "autoIndex": True}
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
