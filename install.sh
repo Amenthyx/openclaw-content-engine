@@ -2528,4 +2528,261 @@ main() {
     print_summary
 }
 
-main "$@"
+# ============================================================================
+# Standalone restart command: bash install.sh --restart
+# Finds OpenClaw, kills everything, restarts gateway + all nodes, approves devices
+# ============================================================================
+standalone_restart() {
+    log "=== OpenClaw Full Restart ==="
+    detect_os
+
+    # Find the binary
+    if ! find_openclaw_bin; then
+        err "openclaw CLI not found in PATH"
+        err "Install it first: npm install -g @anthropic/openclaw"
+        exit 1
+    fi
+    log "  CLI: $OC_BIN"
+
+    # Detect install mode
+    INSTALL_MODE="local"
+    # Check for local install
+    local candidates=""
+    case "$OS_TYPE" in
+        windows) candidates="$USERPROFILE/.openclaw $APPDATA/openclaw $HOME/.openclaw" ;;
+        macos) candidates="$HOME/.openclaw $HOME/Library/Application Support/openclaw" ;;
+        *) candidates="$HOME/.openclaw" ;;
+    esac
+    for c in $candidates; do
+        if [ -d "$c" ]; then
+            OPENCLAW_HOME="$c"
+            break
+        fi
+    done
+    if [ -z "$OPENCLAW_HOME" ]; then
+        OPENCLAW_HOME="$HOME/.openclaw"
+    fi
+    log "  Home: $OPENCLAW_HOME"
+
+    # ---- STEP 1: Kill everything ----
+    log "  [1/5] Stopping all nodes and gateway..."
+    "$OC_BIN" node stop --all 2>/dev/null || true
+    "$OC_BIN" node stop 2>/dev/null || true
+
+    # List and stop individual nodes
+    local all_nodes
+    all_nodes=$("$OC_BIN" nodes list 2>&1 || true)
+    local node_ids
+    node_ids=$(echo "$all_nodes" | grep -oE '[a-f0-9-]{8,}' | head -20)
+    if [ -n "$node_ids" ]; then
+        for nid in $node_ids; do
+            "$OC_BIN" node stop "$nid" 2>/dev/null || true
+        done
+    fi
+
+    # Kill lingering node processes
+    case "$OS_TYPE" in
+        windows)
+            wmic.exe process where "CommandLine like '%openclaw%node%run%'" call terminate 2>/dev/null || true
+            ;;
+        linux|wsl|macos)
+            pkill -f "openclaw.*node.*run" 2>/dev/null || true
+            ;;
+    esac
+
+    sleep 1
+
+    # Stop gateway
+    "$OC_BIN" gateway stop 2>/dev/null || true
+    sleep 1
+
+    # Kill by port
+    local gw_port=18789
+    local cfg_port
+    cfg_port=$("$OC_BIN" config get gateway.port 2>/dev/null || true)
+    if [ -n "$cfg_port" ] && echo "$cfg_port" | grep -qE '^[0-9]+$'; then
+        gw_port="$cfg_port"
+    fi
+
+    case "$OS_TYPE" in
+        windows)
+            local pids
+            pids=$(netstat.exe -ano 2>/dev/null | grep ":${gw_port} " | grep "LISTEN" | awk '{print $5}' | sort -u)
+            for pid in $pids; do
+                if [ -n "$pid" ] && [ "$pid" != "0" ]; then
+                    taskkill.exe //PID "$pid" //F 2>/dev/null || true
+                fi
+            done
+            wmic.exe process where "CommandLine like '%openclaw%gateway%'" call terminate 2>/dev/null || true
+            ;;
+        linux|wsl)
+            if command -v fuser >/dev/null 2>&1; then
+                fuser -k "${gw_port}/tcp" 2>/dev/null || true
+            elif command -v lsof >/dev/null 2>&1; then
+                local _pids
+                _pids=$(lsof -ti :"$gw_port" 2>/dev/null || true)
+                if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
+            fi
+            pkill -f "openclaw.*gateway" 2>/dev/null || true
+            ;;
+        macos)
+            if command -v lsof >/dev/null 2>&1; then
+                local _pids
+                _pids=$(lsof -ti :"$gw_port" 2>/dev/null || true)
+                if [ -n "$_pids" ]; then kill -9 $_pids 2>/dev/null || true; fi
+            fi
+            pkill -f "openclaw.*gateway" 2>/dev/null || true
+            ;;
+    esac
+
+    sleep 3
+    log "  All OpenClaw processes killed"
+
+    # ---- STEP 2: Start gateway ----
+    log "  [2/5] Starting gateway..."
+    case "$OS_TYPE" in
+        windows)
+            "$OC_BIN" gateway --force >/dev/null 2>&1 &
+            disown "$!" 2>/dev/null || true
+            ;;
+        *)
+            nohup "$OC_BIN" gateway --force >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            ;;
+    esac
+
+    # Wait for gateway
+    log "  [3/5] Waiting for gateway..."
+    local attempts=0
+    local gw_up=false
+    while [ "$attempts" -lt 20 ]; do
+        sleep 2
+        attempts=$((attempts + 1))
+        local probe
+        probe=$("$OC_BIN" gateway status 2>&1 || true)
+        if echo "$probe" | grep -q "RPC probe: ok"; then
+            gw_up=true
+            break
+        fi
+        if [ "$((attempts % 5))" -eq 0 ]; then
+            log "  Still waiting... ($attempts/20)"
+        fi
+    done
+
+    if $gw_up; then
+        log "  Gateway: ONLINE"
+    else
+        err "  Gateway did not start within 40 seconds"
+        err "  Try manually: $OC_BIN gateway --force"
+        return 1
+    fi
+
+    # ---- STEP 3: Start all nodes ----
+    log "  [4/5] Starting all node hosts..."
+    local gw_host="127.0.0.1"
+
+    # Install/reinstall local node host
+    "$OC_BIN" node install --host "$gw_host" --port "$gw_port" --force 2>/dev/null || true
+
+    # Restart all nodes
+    "$OC_BIN" node restart --all 2>/dev/null || true
+    "$OC_BIN" node restart 2>/dev/null || {
+        log "  Starting node host in background..."
+        case "$OS_TYPE" in
+            windows)
+                "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
+                disown "$!" 2>/dev/null || true
+                ;;
+            *)
+                nohup "$OC_BIN" node run --host "$gw_host" --port "$gw_port" >/dev/null 2>&1 &
+                disown 2>/dev/null || true
+                ;;
+        esac
+    }
+
+    # ---- STEP 4: Approve all device pairings ----
+    log "  [5/5] Approving all device pairings..."
+    sleep 5
+
+    "$OC_BIN" devices approve --all 2>/dev/null || true
+    "$OC_BIN" nodes approve --all 2>/dev/null || true
+
+    # Approve individual devices
+    local devices_out
+    devices_out=$("$OC_BIN" devices list 2>&1 || true)
+    local request_ids
+    request_ids=$(echo "$devices_out" | grep -oE '[a-f0-9-]{8,}' | head -10)
+    if [ -n "$request_ids" ]; then
+        for rid in $request_ids; do
+            "$OC_BIN" devices approve "$rid" 2>/dev/null || true
+        done
+    fi
+
+    # Wait for nodes to reconnect
+    local node_attempts=0
+    local node_up=false
+    while [ "$node_attempts" -lt 15 ]; do
+        sleep 3
+        node_attempts=$((node_attempts + 1))
+        local nodes_out
+        nodes_out=$("$OC_BIN" nodes status 2>&1 || true)
+        if echo "$nodes_out" | grep -q "Connected: [1-9]"; then
+            node_up=true
+            local connected_count
+            connected_count=$(echo "$nodes_out" | grep -oE 'Connected: [0-9]+' | grep -oE '[0-9]+' || echo "?")
+            log "  Nodes connected: $connected_count"
+            break
+        fi
+        # Keep approving during wait
+        "$OC_BIN" devices approve --all 2>/dev/null || true
+        "$OC_BIN" nodes approve --all 2>/dev/null || true
+    done
+
+    if $node_up; then
+        log "  All node hosts: CONNECTED (agent has full tool access)"
+    else
+        warn "  Nodes may not have reconnected yet"
+        warn "  Check: openclaw nodes status"
+        warn "  Fix:   openclaw devices approve --all && openclaw node restart --all"
+    fi
+
+    # Verify browser
+    local browser_status
+    browser_status=$("$OC_BIN" browser status 2>&1 || true)
+    if echo "$browser_status" | grep -qi "enabled: true"; then
+        log "  Browser: ACTIVE"
+    else
+        warn "  Browser may need activation — run: openclaw plugins activate lobster"
+    fi
+
+    echo ""
+    log "=== OpenClaw Restart Complete ==="
+    log "  Gateway: $(if $gw_up; then echo 'ONLINE'; else echo 'OFFLINE'; fi)"
+    log "  Nodes:   $(if $node_up; then echo 'CONNECTED'; else echo 'PENDING'; fi)"
+    log "  Port:    $gw_port"
+    echo ""
+}
+
+# ============================================================================
+# Entry point — supports: install (default), --restart, --help
+# ============================================================================
+case "${1:-}" in
+    --restart|-r|restart)
+        standalone_restart
+        ;;
+    --help|-h|help)
+        echo "Usage: bash install.sh [command]"
+        echo ""
+        echo "Commands:"
+        echo "  (no args)    Full installation wizard"
+        echo "  --restart    Restart OpenClaw gateway + all nodes (no reinstall)"
+        echo "  --help       Show this help"
+        echo ""
+        echo "Examples:"
+        echo "  bash install.sh              # Full install"
+        echo "  bash install.sh --restart    # Just restart everything"
+        ;;
+    *)
+        main "$@"
+        ;;
+esac

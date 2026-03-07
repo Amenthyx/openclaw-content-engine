@@ -1212,4 +1212,174 @@ function Main {
     Print-Summary
 }
 
-Main
+# ============================================================================
+# Standalone restart: powershell -File install.ps1 --restart
+# ============================================================================
+function Standalone-Restart {
+    Log "=== OpenClaw Full Restart ==="
+
+    if (-not (Find-OpenClaw)) {
+        Err "openclaw CLI not found in PATH"
+        Err "Install it first: npm install -g @anthropic/openclaw"
+        exit 1
+    }
+    Log "  CLI: $OcBin"
+
+    # Find OpenClaw home
+    $candidates = @(
+        (Join-Path $env:USERPROFILE ".openclaw"),
+        (Join-Path $env:APPDATA "openclaw"),
+        "C:\Users\$env:USERNAME\.openclaw"
+    )
+    $script:OpenClawHome = ""
+    foreach ($c in $candidates) {
+        if (Test-Path $c -PathType Container) { $script:OpenClawHome = $c; break }
+    }
+    if (-not $OpenClawHome) { $script:OpenClawHome = Join-Path $env:USERPROFILE ".openclaw" }
+    Log "  Home: $OpenClawHome"
+    $script:InstallMode = "local"
+
+    # Step 1: Kill everything
+    Log "  [1/5] Stopping all nodes and gateway..."
+    try { & $OcBin node stop --all 2>$null } catch {}
+    try { & $OcBin node stop 2>$null } catch {}
+
+    try {
+        $allNodes = & $OcBin nodes list 2>$null | Out-String
+        $nodeIds = [regex]::Matches($allNodes, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+        foreach ($nid in $nodeIds) {
+            try { & $OcBin node stop $nid 2>$null } catch {}
+        }
+    } catch {}
+
+    try {
+        Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%node%run%'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+
+    Start-Sleep -Seconds 1
+    try { & $OcBin gateway stop 2>$null } catch {}
+    Start-Sleep -Seconds 1
+
+    $gwPort = 18789
+    try {
+        $cfgPort = & $OcBin config get gateway.port 2>$null
+        if ($cfgPort -match '^\d+$') { $gwPort = [int]$cfgPort }
+    } catch {}
+
+    $portProcs = netstat -ano 2>$null | Select-String ":$gwPort\s.*LISTEN"
+    foreach ($line in $portProcs) {
+        if ($line -match '\s(\d+)\s*$') {
+            $pid = $Matches[1]
+            if ($pid -and $pid -ne "0") {
+                try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    }
+    try {
+        Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%gateway%'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+
+    Start-Sleep -Seconds 3
+    Log "  All OpenClaw processes killed"
+
+    # Step 2: Start gateway
+    Log "  [2/5] Starting gateway..."
+    Start-Process -FilePath $OcBin -ArgumentList "gateway","--force" -WindowStyle Hidden
+
+    # Step 3: Wait for gateway
+    Log "  [3/5] Waiting for gateway..."
+    $gwUp = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $statusOut = & $OcBin gateway status 2>$null | Out-String
+            if ($statusOut -match "RPC probe: ok") { $gwUp = $true; break }
+        } catch {}
+        if ($i % 5 -eq 4) { Log "  Still waiting... ($($i+1)/20)" }
+    }
+
+    if ($gwUp) { Log "  Gateway: ONLINE" }
+    else { Err "  Gateway did not start. Try: openclaw gateway --force"; return }
+
+    # Step 4: Start all nodes
+    Log "  [4/5] Starting all node hosts..."
+    $gwHost = "127.0.0.1"
+    try { & $OcBin node install --host $gwHost --port $gwPort --force 2>$null } catch {}
+    try { & $OcBin node restart --all 2>$null } catch {}
+    try { & $OcBin node restart 2>$null } catch {
+        Log "  Starting node host in background..."
+        Start-Process -FilePath $OcBin -ArgumentList "node","run","--host",$gwHost,"--port",$gwPort -WindowStyle Hidden
+    }
+
+    # Step 5: Approve all devices
+    Log "  [5/5] Approving all device pairings..."
+    Start-Sleep -Seconds 5
+    try { & $OcBin devices approve --all 2>$null } catch {}
+    try { & $OcBin nodes approve --all 2>$null } catch {}
+
+    try {
+        $devicesOut = & $OcBin devices list 2>$null | Out-String
+        $ids = [regex]::Matches($devicesOut, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+        foreach ($rid in $ids) { try { & $OcBin devices approve $rid 2>$null } catch {} }
+    } catch {}
+
+    # Wait for nodes
+    $nodeUp = $false
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep -Seconds 3
+        try {
+            $nodesOut = & $OcBin nodes status 2>$null | Out-String
+            if ($nodesOut -match "Connected: [1-9]") {
+                $nodeUp = $true
+                if ($nodesOut -match "Connected: (\d+)") { Log "  Nodes connected: $($Matches[1])" }
+                break
+            }
+        } catch {}
+        try { & $OcBin devices approve --all 2>$null } catch {}
+        try { & $OcBin nodes approve --all 2>$null } catch {}
+    }
+
+    if ($nodeUp) { Log "  All node hosts: CONNECTED (agent has full tool access)" }
+    else {
+        Warn "  Nodes may not have reconnected yet"
+        Warn "  Check: openclaw nodes status"
+        Warn "  Fix:   openclaw devices approve --all; openclaw node restart --all"
+    }
+
+    # Verify browser
+    try {
+        $bStatus = & $OcBin browser status 2>$null | Out-String
+        if ($bStatus -match "enabled.*true") { Log "  Browser: ACTIVE" }
+        else { Warn "  Browser may need activation: openclaw plugins activate lobster" }
+    } catch {}
+
+    Write-Host ""
+    Log "=== OpenClaw Restart Complete ==="
+    Log "  Gateway: $(if ($gwUp) { 'ONLINE' } else { 'OFFLINE' })"
+    Log "  Nodes:   $(if ($nodeUp) { 'CONNECTED' } else { 'PENDING' })"
+    Log "  Port:    $gwPort"
+    Write-Host ""
+}
+
+# ============================================================================
+# Entry point — supports: install (default), --restart, --help
+# ============================================================================
+$cmd = if ($args.Count -gt 0) { $args[0] } else { "" }
+switch -Regex ($cmd) {
+    '^(--restart|-r|restart)$' { Standalone-Restart }
+    '^(--help|-h|help)$' {
+        Write-Host "Usage: powershell -File install.ps1 [command]"
+        Write-Host ""
+        Write-Host "Commands:"
+        Write-Host "  (no args)    Full installation wizard"
+        Write-Host "  --restart    Restart OpenClaw gateway + all nodes (no reinstall)"
+        Write-Host "  --help       Show this help"
+        Write-Host ""
+        Write-Host "Examples:"
+        Write-Host "  powershell -File install.ps1              # Full install"
+        Write-Host "  powershell -File install.ps1 --restart    # Just restart everything"
+    }
+    default { Main }
+}
