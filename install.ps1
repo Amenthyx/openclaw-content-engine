@@ -718,8 +718,32 @@ function Restart-Gateway {
         return
     }
 
-    # Step 1: Kill all OpenClaw processes
-    Log "  Killing all OpenClaw processes..."
+    # Step 1: Stop all nodes first, then kill gateway
+    Log "  Stopping all OpenClaw nodes and gateway..."
+
+    # Stop all node hosts first (they depend on gateway)
+    try { & $OcBin node stop --all 2>$null } catch {}
+    try { & $OcBin node stop 2>$null } catch {}
+
+    # Stop individual nodes
+    try {
+        $allNodes = & $OcBin nodes list 2>$null | Out-String
+        $nodeIds = [regex]::Matches($allNodes, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
+        foreach ($nid in $nodeIds) {
+            Log "  Stopping node: $nid"
+            try { & $OcBin node stop $nid 2>$null } catch {}
+        }
+    } catch {}
+
+    # Kill any lingering node host processes
+    try {
+        Get-WmiObject Win32_Process -Filter "CommandLine like '%openclaw%node%run%'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+
+    Start-Sleep -Seconds 1
+
+    # Now stop the gateway
     try { & $OcBin gateway stop 2>$null } catch {}
     Start-Sleep -Seconds 1
 
@@ -775,61 +799,72 @@ function Restart-Gateway {
         Err "  Start manually: openclaw gateway --force"
     }
 
-    # Step 4: Install and start node host (provides tools to agent)
-    # Docs: https://docs.openclaw.ai/cli/node
-    Log "  Installing node host (provides browser + exec tools to agent)..."
-    try { & $OcBin node stop 2>$null } catch {}
-    Start-Sleep -Seconds 1
+    # Step 4: Restart ALL node hosts
+    Log "  Restarting all node hosts..."
 
     $gwHost = "127.0.0.1"
+
+    # Install/reinstall local node host
     try { & $OcBin node install --host $gwHost --port $gwPort --force 2>$null } catch { Warn "  node install failed" }
+
+    # Restart all nodes
+    try { & $OcBin node restart --all 2>$null } catch {}
     try { & $OcBin node restart 2>$null } catch {
-        Log "  Starting node host in background..."
+        Log "  Starting local node host in background..."
         Start-Process -FilePath $OcBin -ArgumentList "node","run","--host",$gwHost,"--port",$gwPort -WindowStyle Hidden
     }
 
-    # Step 5: Approve device pairing request
-    Log "  Waiting for node pairing request..."
+    # Step 5: Approve all node pairing requests
+    Log "  Approving all node pairing requests..."
     Start-Sleep -Seconds 5
 
-    # Auto-approve pending device pairing requests
+    try { & $OcBin devices approve --all 2>$null } catch {}
+    try { & $OcBin nodes approve --all 2>$null } catch {}
+
     try {
         $devicesOut = & $OcBin devices list 2>$null | Out-String
         Log "  Devices: $devicesOut"
         $ids = [regex]::Matches($devicesOut, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
         foreach ($rid in $ids) {
-            Log "  Approving device pairing: $rid"
+            Log "  Approving device: $rid"
             try { & $OcBin devices approve $rid 2>$null } catch {}
         }
     } catch {}
-    try { & $OcBin devices approve --all 2>$null } catch {}
-    try { & $OcBin nodes approve --all 2>$null } catch {}
 
-    # Step 6: Wait for node to connect
-    Log "  Waiting for node host to connect..."
+    # Step 6: Wait for all nodes to reconnect
+    Log "  Waiting for all node hosts to reconnect..."
     $nodeUp = $false
-    for ($i = 0; $i -lt 10; $i++) {
+    for ($i = 0; $i -lt 15; $i++) {
         Start-Sleep -Seconds 3
         try {
             $nodesOut = & $OcBin nodes status 2>$null | Out-String
-            if ($nodesOut -match "Connected: [1-9]") { $nodeUp = $true; break }
+            if ($nodesOut -match "Connected: [1-9]") {
+                $nodeUp = $true
+                if ($nodesOut -match "Connected: (\d+)") {
+                    Log "  Nodes connected: $($Matches[1])"
+                }
+                break
+            }
         } catch {}
-        # Check for new pending requests
+        # Keep approving new pairing requests
         try {
             $newDev = & $OcBin devices list 2>$null | Out-String
             $newIds = [regex]::Matches($newDev, '[a-f0-9-]{8,}') | ForEach-Object { $_.Value }
             foreach ($rid in $newIds) { try { & $OcBin devices approve $rid 2>$null } catch {} }
         } catch {}
+        try { & $OcBin devices approve --all 2>$null } catch {}
+        try { & $OcBin nodes approve --all 2>$null } catch {}
     }
 
     if ($nodeUp) {
-        Log "  Node host: CONNECTED (agent now has browser + exec tools)"
+        Log "  All node hosts: CONNECTED (agent has full tool access)"
     } else {
-        Warn "  Node host not connected yet"
+        Warn "  Some node hosts may not have reconnected"
         Warn "  Manual fix:"
-        Warn "    1. openclaw devices list          (find pending request)"
-        Warn "    2. openclaw devices approve <id>   (approve it)"
-        Warn "    3. openclaw nodes status           (verify Connected: 1+)"
+        Warn "    1. openclaw nodes status            (check connected nodes)"
+        Warn "    2. openclaw devices list             (find pending requests)"
+        Warn "    3. openclaw devices approve --all    (approve all)"
+        Warn "    4. openclaw node restart --all       (restart all nodes)"
     }
 }
 
