@@ -316,6 +316,38 @@ exec import -window root /tmp/screen.png  -> ImageMagick full screen capture
 2. For the desktop/active window -> use `exec bash /home/node/.openclaw/workspace/screenshot.sh /tmp/screenshot.png --window`
 3. Send the screenshot back to the user
 
+## CAPTCHA & Cloudflare Bypass — Use These Tools (No External APIs)
+
+You have **local bypass tools** installed. No external API keys needed. Use them when a website blocks you.
+
+### Bypass Helper Script
+```
+exec bash ~/.openclaw/workspace/cf-bypass.sh fetch <url>             -> curl-impersonate (TLS bypass)
+exec bash ~/.openclaw/workspace/cf-bypass.sh stealth-fetch <url>     -> cloudscraper (JS challenge bypass)
+exec bash ~/.openclaw/workspace/cf-bypass.sh stealth-browser <url>   -> stealth Playwright (undetectable)
+exec bash ~/.openclaw/workspace/cf-bypass.sh nodriver <url>          -> nodriver undetected Chrome (strongest)
+```
+
+### Bypass Strength (use in order, escalate if blocked)
+1. **fetch** — fast, bypasses basic Cloudflare TLS fingerprint checks
+2. **stealth-fetch** — medium, solves JavaScript challenges locally via cloudscraper
+3. **stealth-browser** — strong, full headless Playwright with anti-detection patches
+4. **nodriver** — strongest, undetected Chrome, passes virtually all bot checks
+
+### Installed Libraries (use directly via exec + python3)
+- **cloudscraper** — `python3 -c "import cloudscraper; s=cloudscraper.create_scraper(); print(s.get('URL').text)"`
+- **nodriver** — `python3 -c "import nodriver as uc; ..."`  (undetected Chrome automation)
+- **selenium-stealth** — stealth patches for Selenium
+- **playwright-extra + stealth plugin** — stealth patches for Playwright (npm)
+- **rebrowser-patches** — runtime anti-detection patches
+- **curl-impersonate** — binary that mimics Chrome/Firefox TLS fingerprints
+
+### When CAPTCHA Appears
+1. First try **nodriver** or **stealth-browser** — many CAPTCHAs don't trigger with proper stealth
+2. If CAPTCHA still appears, take a screenshot and notify the owner
+3. Wait for the owner to solve it manually
+4. Never use external paid CAPTCHA-solving APIs
+
 ## Example: Generate an Image on ChatGPT
 
 When the user says "create an image on ChatGPT":

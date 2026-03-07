@@ -1600,6 +1600,251 @@ fi'
         log "  Node.js tools checked"
     fi
 
+    # ---- 10. Anti-CAPTCHA & Cloudflare bypass tools (all local, no external APIs) ----
+    log "  [Tools] Installing stealth & Cloudflare bypass tools (local only)..."
+
+    # 10a. Playwright stealth (npm) — makes browser undetectable as bot
+    log "  [Stealth] Installing Playwright/Puppeteer stealth plugins..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec -u node "$CONTAINER_NAME" bash -c '
+            npm install -g playwright-extra puppeteer-extra-plugin-stealth rebrowser-patches 2>/dev/null || true
+        ' 2>/dev/null && log "  playwright-extra + stealth plugin installed" || warn "  Stealth plugin install failed (optional)"
+    else
+        if command -v npm >/dev/null 2>&1; then
+            npm list -g playwright-extra >/dev/null 2>&1 || npm install -g playwright-extra puppeteer-extra-plugin-stealth rebrowser-patches 2>/dev/null || true
+            log "  playwright-extra + stealth plugin: available"
+        fi
+    fi
+
+    # 10b. Python stealth & Cloudflare bypass libraries (all local, no API keys)
+    log "  [Stealth] Installing Python bypass libraries..."
+    local stealth_packages="cloudscraper selenium-stealth nodriver"
+    if [ "$BROWSER_ENGINE" = "chrome" ]; then
+        stealth_packages="$stealth_packages undetected-chromedriver"
+    fi
+
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec -u node "$CONTAINER_NAME" bash -c "
+            pip3 install --user --break-system-packages $stealth_packages 2>/dev/null || true
+        " 2>/dev/null && log "  Python stealth packages installed" || warn "  Some Python packages failed"
+    else
+        if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+            local py_cmd="python3"
+            command -v python3 >/dev/null 2>&1 || py_cmd="python"
+            log "  Installing: $stealth_packages"
+            "$py_cmd" -m pip install --user $stealth_packages 2>/dev/null || warn "  Some stealth packages failed (optional)"
+            log "  Python stealth packages: available"
+        fi
+    fi
+
+    # 10c. curl-impersonate (Cloudflare TLS fingerprint bypass — local binary, no API)
+    log "  [Cloudflare] Installing curl-impersonate..."
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        docker exec -u root "$CONTAINER_NAME" bash -c '
+            ARCH=$(uname -m)
+            case "$ARCH" in
+                x86_64|amd64) CURL_ARCH="x86_64" ;;
+                aarch64|arm64) CURL_ARCH="aarch64" ;;
+                *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+            esac
+            CURL_VER="v0.6.1"
+            curl -sL "https://github.com/lwthiker/curl-impersonate/releases/download/${CURL_VER}/curl-impersonate-${CURL_VER}.${CURL_ARCH}-linux-gnu.tar.gz" \
+                -o /tmp/curl-impersonate.tar.gz 2>/dev/null && \
+            mkdir -p /usr/local/lib/curl-impersonate && \
+            tar xzf /tmp/curl-impersonate.tar.gz -C /usr/local/lib/curl-impersonate && \
+            ln -sf /usr/local/lib/curl-impersonate/curl-impersonate-chrome /usr/local/bin/curl-impersonate-chrome && \
+            ln -sf /usr/local/lib/curl-impersonate/curl-impersonate-ff /usr/local/bin/curl-impersonate-ff && \
+            rm -f /tmp/curl-impersonate.tar.gz && \
+            echo "curl-impersonate installed"
+        ' 2>/dev/null && log "  curl-impersonate installed in container" || warn "  curl-impersonate install failed (optional)"
+    else
+        case "$OS_TYPE" in
+            linux|wsl)
+                if ! command -v curl-impersonate-chrome >/dev/null 2>&1; then
+                    local curl_arch=""
+                    case "$(uname -m)" in
+                        x86_64|amd64) curl_arch="x86_64" ;;
+                        aarch64|arm64) curl_arch="aarch64" ;;
+                    esac
+                    if [ -n "$curl_arch" ]; then
+                        local curl_ver="v0.6.1"
+                        local curl_url="https://github.com/lwthiker/curl-impersonate/releases/download/${curl_ver}/curl-impersonate-${curl_ver}.${curl_arch}-linux-gnu.tar.gz"
+                        log "  Downloading curl-impersonate..."
+                        curl -sL "$curl_url" -o /tmp/curl-impersonate.tar.gz 2>/dev/null && \
+                        sudo mkdir -p /usr/local/lib/curl-impersonate && \
+                        sudo tar xzf /tmp/curl-impersonate.tar.gz -C /usr/local/lib/curl-impersonate && \
+                        sudo ln -sf /usr/local/lib/curl-impersonate/curl-impersonate-chrome /usr/local/bin/curl-impersonate-chrome && \
+                        sudo ln -sf /usr/local/lib/curl-impersonate/curl-impersonate-ff /usr/local/bin/curl-impersonate-ff && \
+                        rm -f /tmp/curl-impersonate.tar.gz && \
+                        log "  curl-impersonate installed" || warn "  curl-impersonate install failed (optional)"
+                    fi
+                else
+                    log "  curl-impersonate: already installed"
+                fi
+                ;;
+            macos)
+                if command -v brew >/dev/null 2>&1; then
+                    brew list curl-impersonate >/dev/null 2>&1 || {
+                        log "  Installing curl-impersonate via Homebrew..."
+                        brew install curl-impersonate 2>/dev/null || warn "  curl-impersonate: install via brew failed"
+                    }
+                else
+                    warn "  curl-impersonate: install Homebrew first, then: brew install curl-impersonate"
+                fi
+                ;;
+            windows)
+                log "  curl-impersonate: not available on Windows (use Playwright stealth instead)"
+                ;;
+        esac
+    fi
+
+    # 10d. Stealth & bypass helper script (all local, no external APIs)
+    log "  [Stealth] Installing bypass helper script..."
+    local cf_bypass_content='#!/usr/bin/env bash
+# Stealth browser & Cloudflare bypass helper (local only, no external APIs)
+# Usage:
+#   cf-bypass.sh fetch <url>                   — fetch URL via curl-impersonate (Cloudflare bypass)
+#   cf-bypass.sh stealth-fetch <url>           — fetch via Python cloudscraper
+#   cf-bypass.sh stealth-browser <url>         — open URL in stealth Playwright (undetectable)
+#   cf-bypass.sh nodriver <url>                — open URL in nodriver (undetected Chrome)
+set -euo pipefail
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+    fetch)
+        URL="${1:?URL required}"
+        if command -v curl-impersonate-chrome >/dev/null 2>&1; then
+            curl-impersonate-chrome -s "$URL"
+        elif command -v curl-impersonate-ff >/dev/null 2>&1; then
+            curl-impersonate-ff -s "$URL"
+        else
+            echo "curl-impersonate not found, falling back to stealth curl" >&2
+            curl -s \
+                -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" \
+                -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
+                -H "Accept-Language: en-US,en;q=0.9" \
+                -H "Accept-Encoding: gzip, deflate, br" \
+                -H "Sec-Fetch-Dest: document" \
+                -H "Sec-Fetch-Mode: navigate" \
+                -H "Sec-Fetch-Site: none" \
+                -H "Sec-Fetch-User: ?1" \
+                -H "Upgrade-Insecure-Requests: 1" \
+                --compressed \
+                "$URL"
+        fi
+        ;;
+    stealth-fetch)
+        URL="${1:?URL required}"
+        python3 -c "
+import cloudscraper
+scraper = cloudscraper.create_scraper(
+    browser={\"browser\": \"chrome\", \"platform\": \"windows\", \"desktop\": True},
+    delay=5
+)
+r = scraper.get(\"$URL\")
+print(r.text)
+" 2>/dev/null || {
+            echo "cloudscraper failed, trying curl-impersonate..." >&2
+            "$0" fetch "$URL"
+        }
+        ;;
+    stealth-browser)
+        URL="${1:?URL required}"
+        python3 -c "
+from playwright.sync_api import sync_playwright
+import json
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(
+        headless=True,
+        args=[
+            \"--no-sandbox\",
+            \"--disable-blink-features=AutomationControlled\",
+            \"--disable-dev-shm-usage\"
+        ]
+    )
+    context = browser.new_context(
+        viewport={\"width\": 1920, \"height\": 1080},
+        user_agent=\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\",
+        locale=\"en-US\",
+        timezone_id=\"America/New_York\"
+    )
+    # Remove webdriver flag
+    context.add_init_script(\"\"\"
+        Object.defineProperty(navigator, \"webdriver\", {get: () => undefined});
+        window.chrome = {runtime: {}};
+        Object.defineProperty(navigator, \"plugins\", {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, \"languages\", {get: () => [\"en-US\", \"en\"]});
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === \"notifications\"
+            ? Promise.resolve({state: Notification.permission})
+            : originalQuery(parameters)
+        );
+    \"\"\")
+    page = context.new_page()
+    page.goto(\"$URL\", wait_until=\"networkidle\", timeout=60000)
+    import time; time.sleep(3)
+    print(page.content())
+    browser.close()
+" 2>/dev/null || {
+            echo "Stealth Playwright failed, trying cloudscraper..." >&2
+            "$0" stealth-fetch "$URL"
+        }
+        ;;
+    nodriver)
+        URL="${1:?URL required}"
+        python3 -c "
+import nodriver as uc
+import asyncio
+
+async def main():
+    browser = await uc.start()
+    page = await browser.get(\"$URL\")
+    await page.sleep(5)
+    content = await page.get_content()
+    print(content)
+    browser.stop()
+
+asyncio.run(main())
+" 2>/dev/null || {
+            echo "nodriver failed, trying stealth-browser..." >&2
+            "$0" stealth-browser "$URL"
+        }
+        ;;
+    help|*)
+        echo "Stealth & Cloudflare bypass helper (local only, no external APIs)"
+        echo ""
+        echo "Usage:"
+        echo "  cf-bypass.sh fetch <url>             — curl-impersonate (TLS fingerprint bypass)"
+        echo "  cf-bypass.sh stealth-fetch <url>     — Python cloudscraper (JS challenge bypass)"
+        echo "  cf-bypass.sh stealth-browser <url>   — Stealth Playwright (full browser, undetectable)"
+        echo "  cf-bypass.sh nodriver <url>          — nodriver/undetected Chrome (strongest bypass)"
+        echo ""
+        echo "All tools are local. No external API keys needed."
+        echo ""
+        echo "Bypass strength (weakest to strongest):"
+        echo "  1. fetch            — fast, bypasses basic Cloudflare TLS checks"
+        echo "  2. stealth-fetch    — medium, solves JS challenges locally"
+        echo "  3. stealth-browser  — strong, full headless browser with anti-detection"
+        echo "  4. nodriver         — strongest, undetected Chrome, passes all checks"
+        ;;
+esac'
+
+    if [ "$INSTALL_MODE" = "docker" ]; then
+        local cf_script="/home/node/.openclaw/workspace/cf-bypass.sh"
+        echo "$cf_bypass_content" | docker exec -i -u node "$CONTAINER_NAME" bash -c "cat > $cf_script" 2>/dev/null
+        docker exec -u node "$CONTAINER_NAME" bash -c "chmod +x $cf_script" 2>/dev/null || true
+        log "  cf-bypass.sh deployed to container workspace"
+    else
+        local cf_script="${OPENCLAW_HOME}/workspace/cf-bypass.sh"
+        echo "$cf_bypass_content" > "$cf_script"
+        chmod +x "$cf_script" 2>/dev/null || true
+        log "  cf-bypass.sh deployed to workspace"
+    fi
+
     log "  All tools checked"
 }
 
@@ -2084,6 +2329,8 @@ verify() {
             && log "  totp.sh: OK" || warn "  totp.sh: NOT FOUND"
         [ -f "${OPENCLAW_HOME}/workspace/pwgen.sh" ] \
             && log "  pwgen.sh: OK" || warn "  pwgen.sh: NOT FOUND"
+        [ -f "${OPENCLAW_HOME}/workspace/cf-bypass.sh" ] \
+            && log "  cf-bypass.sh: OK" || warn "  cf-bypass.sh: NOT FOUND"
     fi
     log "  ─── End Tools ───"
 
@@ -2177,10 +2424,15 @@ print_summary() {
     echo "    - screenshot.sh         (desktop/window capture)"
     echo "    - totp.sh               (2FA code generation)"
     echo "    - pwgen.sh              (secure password generation)"
+    echo "    - cf-bypass.sh          (Cloudflare & CAPTCHA bypass)"
     echo "    - Playwright Chromium   (headless browser)"
     echo "    - FFmpeg                (video/audio processing)"
     echo "    - ImageMagick           (image processing)"
     echo "    - pyotp                 (TOTP 2FA library)"
+    echo "    - playwright-extra      (stealth browser patches)"
+    echo "    - cloudscraper          (Cloudflare JS challenge bypass)"
+    echo "    - nodriver              (undetected Chrome automation)"
+    echo "    - curl-impersonate      (TLS fingerprint bypass)"
     echo ""
     printf '%b\n' "  ${GREEN}Capabilities:${NC}"
     echo "    - Browse any website, log in, interact"

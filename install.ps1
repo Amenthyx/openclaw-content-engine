@@ -622,6 +622,74 @@ function Configure-OpenClaw {
         Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "playwright", "--color", "#FF4500")
     }
 
+    # ---- Stealth & Cloudflare bypass tools (local only, no external APIs) ----
+    Log "  Installing stealth & Cloudflare bypass tools..."
+
+    # Playwright stealth plugins (npm)
+    Log "  Installing Playwright stealth plugins..."
+    try {
+        $stealthCheck = npm list -g playwright-extra 2>$null
+        if (-not $stealthCheck -or $stealthCheck -notmatch "playwright-extra") {
+            npm install -g playwright-extra puppeteer-extra-plugin-stealth rebrowser-patches 2>$null
+        }
+        Log "  playwright-extra + stealth: available"
+    } catch { Warn "  Stealth plugins install failed (optional)" }
+
+    # Python stealth & bypass libraries
+    Log "  Installing Python stealth libraries..."
+    $py = Get-Command python3 -ErrorAction SilentlyContinue
+    if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
+    if ($py) {
+        $stealthPkgs = "cloudscraper selenium-stealth nodriver"
+        if ($BrowserEngine -eq "chrome") { $stealthPkgs += " undetected-chromedriver" }
+        try { & $py.Source -m pip install --user $stealthPkgs.Split(" ") 2>$null } catch {}
+        Log "  Python stealth packages: available"
+    }
+
+    # Deploy cf-bypass.sh helper script
+    Log "  Deploying cf-bypass.sh helper script..."
+    $ws = Join-Path $OpenClawHome "workspace"
+    if (-not (Test-Path $ws)) { New-Item -ItemType Directory -Path $ws -Force | Out-Null }
+    $cfScript = Join-Path $ws "cf-bypass.sh"
+    @'
+#!/usr/bin/env bash
+# Stealth browser & Cloudflare bypass helper (local only, no external APIs)
+# Usage:
+#   cf-bypass.sh fetch <url>             - curl-impersonate (TLS fingerprint bypass)
+#   cf-bypass.sh stealth-fetch <url>     - Python cloudscraper (JS challenge bypass)
+#   cf-bypass.sh stealth-browser <url>   - Stealth Playwright (full browser, undetectable)
+#   cf-bypass.sh nodriver <url>          - nodriver/undetected Chrome (strongest bypass)
+set -euo pipefail
+CMD="${1:-help}"; shift || true
+case "$CMD" in
+    fetch)
+        URL="${1:?URL required}"
+        if command -v curl-impersonate-chrome >/dev/null 2>&1; then curl-impersonate-chrome -s "$URL"
+        else curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" --compressed "$URL"; fi ;;
+    stealth-fetch)
+        URL="${1:?URL required}"
+        python3 -c "import cloudscraper; s=cloudscraper.create_scraper(browser={'browser':'chrome','platform':'windows','desktop':True},delay=5); print(s.get('$URL').text)" 2>/dev/null || "$0" fetch "$URL" ;;
+    stealth-browser)
+        URL="${1:?URL required}"
+        python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b=p.chromium.launch(headless=True,args=['--no-sandbox','--disable-blink-features=AutomationControlled'])
+    c=b.new_context(viewport={'width':1920,'height':1080},user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
+    c.add_init_script('Object.defineProperty(navigator,\"webdriver\",{get:()=>undefined});window.chrome={runtime:{}};')
+    pg=c.new_page(); pg.goto('$URL',wait_until='networkidle',timeout=60000)
+    import time; time.sleep(3); print(pg.content()); b.close()
+" 2>/dev/null || "$0" stealth-fetch "$URL" ;;
+    nodriver)
+        URL="${1:?URL required}"
+        python3 -c "import nodriver as uc,asyncio
+async def m(): b=await uc.start(); p=await b.get('$URL'); await p.sleep(5); print(await p.get_content()); b.stop()
+asyncio.run(m())" 2>/dev/null || "$0" stealth-browser "$URL" ;;
+    *) echo "Usage: cf-bypass.sh {fetch|stealth-fetch|stealth-browser|nodriver} <url>" ;;
+esac
+'@ | Set-Content -Path $cfScript -Encoding UTF8
+    Log "  cf-bypass.sh deployed to workspace"
+
     Log "  All settings applied"
 }
 

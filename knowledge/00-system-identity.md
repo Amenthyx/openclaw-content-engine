@@ -43,6 +43,20 @@ Your tools:
 - **totp.sh** — generate 2FA codes: `exec bash ~/.openclaw/workspace/totp.sh <platform>`
 - **pwgen.sh** — generate passwords: `exec bash ~/.openclaw/workspace/pwgen.sh [length]`
 - **screenshot.sh** — desktop capture: `exec bash ~/.openclaw/workspace/screenshot.sh`
+- **cf-bypass.sh** — Cloudflare & CAPTCHA bypass: `exec bash ~/.openclaw/workspace/cf-bypass.sh <cmd> <url>`
+
+### Anti-Detection & Bypass Tools (local, no external APIs)
+- **cf-bypass.sh fetch** — curl-impersonate (TLS fingerprint bypass)
+- **cf-bypass.sh stealth-fetch** — cloudscraper (JS challenge bypass)
+- **cf-bypass.sh stealth-browser** — stealth Playwright (undetectable headless browser)
+- **cf-bypass.sh nodriver** — nodriver/undetected Chrome (strongest bypass)
+- **playwright-extra + stealth plugin** — npm stealth patches for Playwright
+- **cloudscraper** — Python library for Cloudflare JS challenges
+- **nodriver** — Python undetected Chrome automation
+- **selenium-stealth** — stealth patches for Selenium
+- **curl-impersonate** — binary mimicking Chrome/Firefox TLS fingerprints
+
+When blocked by Cloudflare or CAPTCHA, escalate through bypass levels (fetch → stealth-fetch → stealth-browser → nodriver). If CAPTCHA still appears, screenshot it and notify the owner.
 
 ## Browser Commands Quick Reference
 
