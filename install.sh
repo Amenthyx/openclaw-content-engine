@@ -57,6 +57,7 @@ HEARTBEAT_INTERVAL=""
 ENABLE_CHANNELS=""
 CHANNEL_CONFIGS=""
 AUTONOMY_LEVEL="1"
+BROWSER_ENGINE="playwright"
 
 # ============================================================================
 # Find openclaw binary (cross-platform)
@@ -517,6 +518,24 @@ detect_installations() {
 
     echo ""
 
+    # --- Browser Engine ---
+    printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
+    echo ""
+    printf '%b\n' "  ${BOLD}Browser Engine${NC}"
+    echo ""
+    printf '%b\n' "  Which browser should the agent use for web automation?"
+    echo ""
+    printf '%b\n' "  ${BOLD}1)${NC} Playwright — headless Chromium (recommended, no GUI needed)"
+    printf '%b\n' "  ${BOLD}2)${NC} Chrome — uses your installed Google Chrome browser"
+    echo ""
+    printf "  %bBrowser engine [1/2]%b [1]: " "$BOLD" "$NC"
+    read -r browser_input
+    case "${browser_input:-1}" in
+        2) BROWSER_ENGINE="chrome" ; log "  Browser: Google Chrome" ;;
+        *) BROWSER_ENGINE="playwright" ; log "  Browser: Playwright (headless Chromium)" ;;
+    esac
+    echo ""
+
     # --- Heartbeat Scheduler ---
     printf '%b\n' "${CYAN}------------------------------------------------------------${NC}"
     echo ""
@@ -823,19 +842,25 @@ configure_via_cli() {
     log "  [Plugins] Ensuring lobster plugin is installed..."
     oc_cmd plugins install lobster 2>/dev/null || true
 
-    # Install Playwright CLI + browsers (default navigation engine)
-    log "  [Browser] Installing Playwright CLI and Chromium browser..."
-    if command -v npx >/dev/null 2>&1; then
-        npx playwright install chromium 2>/dev/null || true
-        npx playwright install-deps chromium 2>/dev/null || true
+    # Install browser engine
+    if [ "$BROWSER_ENGINE" = "chrome" ]; then
+        log "  [Browser] Chrome selected — skipping Playwright install"
+        log "  [Browser] Make sure Google Chrome is installed on this machine"
+        oc_cmd browser setup 2>/dev/null || true
+    else
+        log "  [Browser] Installing Playwright CLI and Chromium browser..."
+        if command -v npx >/dev/null 2>&1; then
+            npx playwright install chromium 2>/dev/null || true
+            npx playwright install-deps chromium 2>/dev/null || true
+        fi
+        # Also install via npm globally as fallback
+        if command -v npm >/dev/null 2>&1; then
+            npm list -g playwright >/dev/null 2>&1 || npm install -g playwright 2>/dev/null || true
+        fi
+        # Also try OpenClaw's built-in browser setup
+        oc_cmd browser setup 2>/dev/null || true
+        oc_cmd browser install 2>/dev/null || true
     fi
-    # Also install via npm globally as fallback
-    if command -v npm >/dev/null 2>&1; then
-        npm list -g playwright >/dev/null 2>&1 || npm install -g playwright 2>/dev/null || true
-    fi
-    # Also try OpenClaw's built-in browser setup
-    oc_cmd browser setup 2>/dev/null || true
-    oc_cmd browser install 2>/dev/null || true
 
     # --- TOOLS: FULL ACCESS (ALL PERMISSIONS GRANTED) ---
     log "  [Tools] Granting ALL permissions for ALL tools on ALL channels..."
@@ -888,17 +913,27 @@ configure_via_cli() {
     # --- MESSAGES: ack reactions for group mentions ---
     oc_config set messages.ackReactionScope group-mentions
 
-    # --- BROWSER: PLAYWRIGHT CLI AS DEFAULT ---
-    log "  [Browser] Configuring Playwright CLI as default browser engine..."
+    # --- BROWSER ENGINE ---
+    log "  [Browser] Configuring browser engine: ${BROWSER_ENGINE}..."
     oc_config set browser.defaultProfile openclaw
-    oc_config set browser.engine playwright
-    oc_config set browser.driver playwright
-    oc_config set browser.type chromium
-    oc_config set browser.headless true
-    oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]'
     oc_config set browser.navigationTimeout 60000
     oc_config set browser.actionTimeout 30000
-    oc_cmd browser create-profile --name openclaw --driver playwright --color "#FF4500" 2>/dev/null || true
+
+    if [ "$BROWSER_ENGINE" = "chrome" ]; then
+        oc_config set browser.engine chrome
+        oc_config set browser.driver chrome
+        oc_config set browser.type chrome
+        oc_config set browser.headless false
+        oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]'
+        oc_cmd browser create-profile --name openclaw --driver chrome --color "#FF4500" 2>/dev/null || true
+    else
+        oc_config set browser.engine playwright
+        oc_config set browser.driver playwright
+        oc_config set browser.type chromium
+        oc_config set browser.headless true
+        oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]'
+        oc_cmd browser create-profile --name openclaw --driver playwright --color "#FF4500" 2>/dev/null || true
+    fi
 
     # --- SESSION PERSISTENCE ---
     log "  [Sessions] Enabling cookie/session persistence..."
@@ -1060,11 +1095,13 @@ if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
-cfg.browser.engine = 'playwright';
-cfg.browser.driver = 'playwright';
-cfg.browser.type = 'chromium';
-cfg.browser.headless = true;
+var bEngine = process.argv[6] || 'playwright';
+cfg.browser.engine = bEngine;
+cfg.browser.driver = bEngine;
+cfg.browser.type = bEngine === 'chrome' ? 'chrome' : 'chromium';
+cfg.browser.headless = bEngine !== 'chrome';
 cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
+if (bEngine === 'chrome') cfg.browser.launchArgs.push('--start-maximized');
 cfg.browser.navigationTimeout = 60000;
 cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
@@ -1085,13 +1122,13 @@ cfg.notifications.onError = true;
 if (!cfg.memory) cfg.memory = {};
 cfg.memory.longTerm = { enabled: true, autoIndex: true };
 fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
-" "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" 2>&1 && log "  Config written" || err "  Node.js config write failed"
+" "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" "$BROWSER_ENGINE" 2>&1 && log "  Config written" || err "  Node.js config write failed"
 
     elif command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
         local py
         if command -v python3 >/dev/null 2>&1; then py="python3"; else py="python"; fi
         log "  Writing config via Python..."
-        "$py" - "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" <<'PYEOF'
+        "$py" - "$config_file" "$ws" "$ENABLE_HEARTBEAT" "$HEARTBEAT_INTERVAL" "$NOTIFY_CHANNEL" "$BROWSER_ENGINE" <<'PYEOF'
 import json, sys, os
 path, ws = sys.argv[1], sys.argv[2]
 cfg = {}
@@ -1137,13 +1174,17 @@ cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
 cfg.setdefault("messages", {})
 cfg["messages"]["ackReactionScope"] = "group-mentions"
+b_engine = sys.argv[6] if len(sys.argv) > 6 else "playwright"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
-cfg["browser"]["engine"] = "playwright"
-cfg["browser"]["driver"] = "playwright"
-cfg["browser"]["type"] = "chromium"
-cfg["browser"]["headless"] = True
-cfg["browser"]["launchArgs"] = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+cfg["browser"]["engine"] = b_engine
+cfg["browser"]["driver"] = b_engine
+cfg["browser"]["type"] = "chrome" if b_engine == "chrome" else "chromium"
+cfg["browser"]["headless"] = b_engine != "chrome"
+launch_args = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+if b_engine == "chrome":
+    launch_args.append("--start-maximized")
+cfg["browser"]["launchArgs"] = launch_args
 cfg["browser"]["navigationTimeout"] = 60000
 cfg["browser"]["actionTimeout"] = 30000
 cfg["browser"]["persistSessions"] = True
@@ -2153,7 +2194,7 @@ print_summary() {
     echo ""
     printf '%b\n' "  ${GREEN}Configured:${NC}"
     echo '    - tools.allow = ["*"]   (full tool access)'
-    echo "    - browser.engine = playwright (Playwright CLI)"
+    echo "    - browser.engine = ${BROWSER_ENGINE}"
     echo "    - permissions.mode = unrestricted"
     echo "    - sandbox = off         (browser + filesystem + exec)"
     echo "    - 4 agents / 8 subs    (parallel execution)"

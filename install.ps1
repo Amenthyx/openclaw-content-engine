@@ -29,6 +29,7 @@ $EnableHeartbeat = "true"
 $HeartbeatInterval = "15"
 $NotifyChannel = "telegram"
 $ChannelConfigs = @()
+$BrowserEngine = "playwright"
 
 # ============================================================================
 # Find openclaw binary
@@ -232,6 +233,26 @@ function Detect-Installations {
 
     $hoursInput = Read-Host "  Working hours [24/7 / business / custom] [24/7]"
     $script:WorkingHours = if ($hoursInput) { $hoursInput } else { "24/7" }
+    Write-Host ""
+
+    # --- Browser Engine ---
+    Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Browser Engine" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Which browser should the agent use for web automation?"
+    Write-Host ""
+    Write-Host "  1) Playwright - headless Chromium (recommended, no GUI needed)" -ForegroundColor White
+    Write-Host "  2) Chrome - uses your installed Google Chrome browser" -ForegroundColor White
+    Write-Host ""
+    $browserInput = Read-Host "  Browser engine [1/2] [1]"
+    if ($browserInput -eq "2") {
+        $script:BrowserEngine = "chrome"
+        Log "  Browser: Google Chrome"
+    } else {
+        $script:BrowserEngine = "playwright"
+        Log "  Browser: Playwright (headless Chromium)"
+    }
     Write-Host ""
 
     # --- Heartbeat Scheduler ---
@@ -455,13 +476,8 @@ function Configure-OpenClaw {
         @("plugins.entries.open-prose.enabled", "true", "open-prose (text)"),
         @("plugins.entries.voice-call.enabled", "true", "voice-call (audio)"),
         # Browser
-        # Browser — Playwright CLI as default engine
+        # Browser engine
         @("browser.defaultProfile", "openclaw", "browser default profile"),
-        @("browser.engine", "playwright", "browser engine = playwright"),
-        @("browser.driver", "playwright", "browser driver = playwright"),
-        @("browser.type", "chromium", "browser type = chromium"),
-        @("browser.headless", "true", "headless mode"),
-        @("browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]', "browser launch args"),
         @("browser.navigationTimeout", "60000", "navigation timeout 60s"),
         @("browser.actionTimeout", "30000", "action timeout 30s"),
         # Tools — ALL permissions granted for ALL channels
@@ -542,6 +558,20 @@ function Configure-OpenClaw {
         Oc-Config -Args @("set", "agents.defaults.workspace", $ws)
     }
 
+    # Browser engine
+    Log "  Configuring browser engine: $BrowserEngine..."
+    Oc-Config -Args @("set", "browser.engine", $BrowserEngine)
+    Oc-Config -Args @("set", "browser.driver", $BrowserEngine)
+    if ($BrowserEngine -eq "chrome") {
+        Oc-Config -Args @("set", "browser.type", "chrome")
+        Oc-Config -Args @("set", "browser.headless", "false")
+        Oc-Config -Args @("set", "browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--start-maximized"]')
+    } else {
+        Oc-Config -Args @("set", "browser.type", "chromium")
+        Oc-Config -Args @("set", "browser.headless", "true")
+        Oc-Config -Args @("set", "browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]')
+    }
+
     # Heartbeat scheduler
     if ($EnableHeartbeat -eq "true") {
         Log "  Configuring heartbeat scheduler..."
@@ -571,23 +601,26 @@ function Configure-OpenClaw {
     Log "  Installing lobster plugin..."
     Oc-Cmd -Args @("plugins", "install", "lobster")
 
-    # Install Playwright CLI + browsers (default navigation engine)
-    Log "  Installing Playwright CLI and Chromium browser..."
-    try { npx playwright install chromium 2>$null } catch {}
-    try { npx playwright install-deps chromium 2>$null } catch {}
-    # Global install as fallback
-    try {
-        $npmList = npm list -g playwright 2>$null
-        if (-not $npmList -or $npmList -notmatch "playwright") {
-            npm install -g playwright 2>$null
-        }
-    } catch {}
-    Oc-Cmd -Args @("browser", "setup")
-    Oc-Cmd -Args @("browser", "install")
-
-    # Create Playwright browser profile
-    Log "  Creating Playwright browser profile..."
-    Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "playwright", "--color", "#FF4500")
+    # Install browser engine
+    if ($BrowserEngine -eq "chrome") {
+        Log "  Chrome selected - skipping Playwright install"
+        Log "  Make sure Google Chrome is installed on this machine"
+        Oc-Cmd -Args @("browser", "setup")
+        Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "chrome", "--color", "#FF4500")
+    } else {
+        Log "  Installing Playwright CLI and Chromium browser..."
+        try { npx playwright install chromium 2>$null } catch {}
+        try { npx playwright install-deps chromium 2>$null } catch {}
+        try {
+            $npmList = npm list -g playwright 2>$null
+            if (-not $npmList -or $npmList -notmatch "playwright") {
+                npm install -g playwright 2>$null
+            }
+        } catch {}
+        Oc-Cmd -Args @("browser", "setup")
+        Oc-Cmd -Args @("browser", "install")
+        Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "playwright", "--color", "#FF4500")
+    }
 
     Log "  All settings applied"
 }
@@ -643,11 +676,13 @@ if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
-cfg.browser.engine = 'playwright';
-cfg.browser.driver = 'playwright';
-cfg.browser.type = 'chromium';
-cfg.browser.headless = true;
+var bEngine = '$BrowserEngine' || 'playwright';
+cfg.browser.engine = bEngine;
+cfg.browser.driver = bEngine;
+cfg.browser.type = bEngine === 'chrome' ? 'chrome' : 'chromium';
+cfg.browser.headless = bEngine !== 'chrome';
 cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
+if (bEngine === 'chrome') cfg.browser.launchArgs.push('--start-maximized');
 cfg.browser.navigationTimeout = 60000;
 cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
@@ -713,13 +748,17 @@ cfg["commands"]["native"] = "auto"
 cfg["commands"]["nativeSkills"] = "auto"
 cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
+b_engine = "$BrowserEngine" or "playwright"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
-cfg["browser"]["engine"] = "playwright"
-cfg["browser"]["driver"] = "playwright"
-cfg["browser"]["type"] = "chromium"
-cfg["browser"]["headless"] = True
-cfg["browser"]["launchArgs"] = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+cfg["browser"]["engine"] = b_engine
+cfg["browser"]["driver"] = b_engine
+cfg["browser"]["type"] = "chrome" if b_engine == "chrome" else "chromium"
+cfg["browser"]["headless"] = b_engine != "chrome"
+launch_args = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+if b_engine == "chrome":
+    launch_args.append("--start-maximized")
+cfg["browser"]["launchArgs"] = launch_args
 cfg["browser"]["navigationTimeout"] = 60000
 cfg["browser"]["actionTimeout"] = 30000
 cfg["browser"]["persistSessions"] = True
@@ -1030,7 +1069,7 @@ function Print-Summary {
     Write-Host "    - content-engine skill"
     Write-Host "    - credentials.json template (30+ platform slots)"
     Write-Host ""
-    Write-Host "  Browser: Playwright CLI (chromium, headless)" -ForegroundColor Green
+    Write-Host "  Browser: $BrowserEngine$(if ($BrowserEngine -eq 'chrome') { ' (Google Chrome)' } else { ' (headless Chromium)' })" -ForegroundColor Green
     Write-Host "  Permissions: ALL GRANTED (unrestricted)" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Capabilities:" -ForegroundColor Green
