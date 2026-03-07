@@ -455,7 +455,15 @@ function Configure-OpenClaw {
         @("plugins.entries.open-prose.enabled", "true", "open-prose (text)"),
         @("plugins.entries.voice-call.enabled", "true", "voice-call (audio)"),
         # Browser
-        @("browser.defaultProfile", "openclaw", "browser default profile (headless)"),
+        # Browser — Playwright CLI as default engine
+        @("browser.defaultProfile", "openclaw", "browser default profile"),
+        @("browser.engine", "playwright", "browser engine = playwright"),
+        @("browser.driver", "playwright", "browser driver = playwright"),
+        @("browser.type", "chromium", "browser type = chromium"),
+        @("browser.headless", "true", "headless mode"),
+        @("browser.launchArgs", '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]', "browser launch args"),
+        @("browser.navigationTimeout", "60000", "navigation timeout 60s"),
+        @("browser.actionTimeout", "30000", "action timeout 30s"),
         # Tools — ALL permissions granted for ALL channels
         @("tools.allow", '["*"]', "allow ALL tools"),
         @("tools.elevated.enabled", "true", "elevated tools"),
@@ -492,6 +500,8 @@ function Configure-OpenClaw {
         # Session persistence
         @("browser.persistSessions", "true", "session persistence"),
         @("browser.cookieStorage", "file", "cookie storage"),
+        @("browser.saveCookiesOnExit", "true", "save cookies on exit"),
+        @("browser.loadCookiesOnStart", "true", "load cookies on start"),
         @("sessions.autoSave", "true", "auto-save sessions"),
         @("sessions.maxAge", "30d", "session max age"),
         # Autonomy — ALL permissions granted
@@ -561,15 +571,23 @@ function Configure-OpenClaw {
     Log "  Installing lobster plugin..."
     Oc-Cmd -Args @("plugins", "install", "lobster")
 
-    # Install Playwright browsers (lobster needs these to function)
-    Log "  Installing Playwright browser binaries..."
+    # Install Playwright CLI + browsers (default navigation engine)
+    Log "  Installing Playwright CLI and Chromium browser..."
     try { npx playwright install chromium 2>$null } catch {}
+    try { npx playwright install-deps chromium 2>$null } catch {}
+    # Global install as fallback
+    try {
+        $npmList = npm list -g playwright 2>$null
+        if (-not $npmList -or $npmList -notmatch "playwright") {
+            npm install -g playwright 2>$null
+        }
+    } catch {}
     Oc-Cmd -Args @("browser", "setup")
     Oc-Cmd -Args @("browser", "install")
 
-    # Create headless browser profile (works without Chrome installed)
-    Log "  Creating headless browser profile..."
-    Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "openclaw", "--color", "#FF4500")
+    # Create Playwright browser profile
+    Log "  Creating Playwright browser profile..."
+    Oc-Cmd -Args @("browser", "create-profile", "--name", "openclaw", "--driver", "playwright", "--color", "#FF4500")
 
     Log "  All settings applied"
 }
@@ -627,8 +645,17 @@ if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
+cfg.browser.engine = 'playwright';
+cfg.browser.driver = 'playwright';
+cfg.browser.type = 'chromium';
+cfg.browser.headless = true;
+cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
+cfg.browser.navigationTimeout = 60000;
+cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
 cfg.browser.cookieStorage = 'file';
+cfg.browser.saveCookiesOnExit = true;
+cfg.browser.loadCookiesOnStart = true;
 if (!cfg.sessions) cfg.sessions = {};
 cfg.sessions.autoSave = true;
 cfg.sessions.maxAge = '30d';
@@ -690,8 +717,17 @@ cfg.setdefault("skills", {})
 cfg["skills"]["install"] = {"nodeManager": "npm"}
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
+cfg["browser"]["engine"] = "playwright"
+cfg["browser"]["driver"] = "playwright"
+cfg["browser"]["type"] = "chromium"
+cfg["browser"]["headless"] = True
+cfg["browser"]["launchArgs"] = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+cfg["browser"]["navigationTimeout"] = 60000
+cfg["browser"]["actionTimeout"] = 30000
 cfg["browser"]["persistSessions"] = True
 cfg["browser"]["cookieStorage"] = "file"
+cfg["browser"]["saveCookiesOnExit"] = True
+cfg["browser"]["loadCookiesOnStart"] = True
 cfg.setdefault("sessions", {})
 cfg["sessions"]["autoSave"] = True
 cfg["sessions"]["maxAge"] = "30d"

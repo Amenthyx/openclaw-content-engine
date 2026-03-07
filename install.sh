@@ -823,10 +823,15 @@ configure_via_cli() {
     log "  [Plugins] Ensuring lobster plugin is installed..."
     oc_cmd plugins install lobster 2>/dev/null || true
 
-    # Install Playwright browsers (lobster needs these to function)
-    log "  [Browser] Installing Playwright browser binaries..."
+    # Install Playwright CLI + browsers (default navigation engine)
+    log "  [Browser] Installing Playwright CLI and Chromium browser..."
     if command -v npx >/dev/null 2>&1; then
         npx playwright install chromium 2>/dev/null || true
+        npx playwright install-deps chromium 2>/dev/null || true
+    fi
+    # Also install via npm globally as fallback
+    if command -v npm >/dev/null 2>&1; then
+        npm list -g playwright >/dev/null 2>&1 || npm install -g playwright 2>/dev/null || true
     fi
     # Also try OpenClaw's built-in browser setup
     oc_cmd browser setup 2>/dev/null || true
@@ -883,15 +888,24 @@ configure_via_cli() {
     # --- MESSAGES: ack reactions for group mentions ---
     oc_config set messages.ackReactionScope group-mentions
 
-    # --- BROWSER PROFILE ---
-    log "  [Browser] Setting default profile to 'openclaw' (headless Playwright)..."
+    # --- BROWSER: PLAYWRIGHT CLI AS DEFAULT ---
+    log "  [Browser] Configuring Playwright CLI as default browser engine..."
     oc_config set browser.defaultProfile openclaw
-    oc_cmd browser create-profile --name openclaw --driver openclaw --color "#FF4500" 2>/dev/null || true
+    oc_config set browser.engine playwright
+    oc_config set browser.driver playwright
+    oc_config set browser.type chromium
+    oc_config set browser.headless true
+    oc_config set browser.launchArgs '["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]'
+    oc_config set browser.navigationTimeout 60000
+    oc_config set browser.actionTimeout 30000
+    oc_cmd browser create-profile --name openclaw --driver playwright --color "#FF4500" 2>/dev/null || true
 
     # --- SESSION PERSISTENCE ---
     log "  [Sessions] Enabling cookie/session persistence..."
     oc_config set browser.persistSessions true
     oc_config set browser.cookieStorage file
+    oc_config set browser.saveCookiesOnExit true
+    oc_config set browser.loadCookiesOnStart true
     oc_config set sessions.autoSave true
     oc_config set sessions.maxAge "30d"
 
@@ -1046,8 +1060,17 @@ if (!cfg.skills) cfg.skills = {};
 cfg.skills.install = { nodeManager: 'npm' };
 if (!cfg.browser) cfg.browser = {};
 cfg.browser.defaultProfile = 'openclaw';
+cfg.browser.engine = 'playwright';
+cfg.browser.driver = 'playwright';
+cfg.browser.type = 'chromium';
+cfg.browser.headless = true;
+cfg.browser.launchArgs = ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'];
+cfg.browser.navigationTimeout = 60000;
+cfg.browser.actionTimeout = 30000;
 cfg.browser.persistSessions = true;
 cfg.browser.cookieStorage = 'file';
+cfg.browser.saveCookiesOnExit = true;
+cfg.browser.loadCookiesOnStart = true;
 if (!cfg.sessions) cfg.sessions = {};
 cfg.sessions.autoSave = true;
 cfg.sessions.maxAge = '30d';
@@ -1116,8 +1139,17 @@ cfg.setdefault("messages", {})
 cfg["messages"]["ackReactionScope"] = "group-mentions"
 cfg.setdefault("browser", {})
 cfg["browser"]["defaultProfile"] = "openclaw"
+cfg["browser"]["engine"] = "playwright"
+cfg["browser"]["driver"] = "playwright"
+cfg["browser"]["type"] = "chromium"
+cfg["browser"]["headless"] = True
+cfg["browser"]["launchArgs"] = ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]
+cfg["browser"]["navigationTimeout"] = 60000
+cfg["browser"]["actionTimeout"] = 30000
 cfg["browser"]["persistSessions"] = True
 cfg["browser"]["cookieStorage"] = "file"
+cfg["browser"]["saveCookiesOnExit"] = True
+cfg["browser"]["loadCookiesOnStart"] = True
 cfg.setdefault("sessions", {})
 cfg["sessions"]["autoSave"] = True
 cfg["sessions"]["maxAge"] = "30d"
